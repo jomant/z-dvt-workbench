@@ -1,0 +1,18 @@
+{
+  "name": "z-dvt-workbench",
+  "version": "2026.9.0",
+  "private": true,
+  "description": "Z-DVT Workbench, crafted by Z-Jomant Meister.",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/jomant/z-dvt-workbench.git"
+  },
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "test": "node src/selftest.js"
+  },
+  "dependencies": {
+    "koffi": "^3.3.4"
+  }
+}

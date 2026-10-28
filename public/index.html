@@ -1,0 +1,481 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Z-DVT Workbench — Crafted by Z-Jomant Meister</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div id="app">
+  <nav id="menubar">
+    <div class="menu"><button type="button">File</button>
+      <div class="drop">
+        <button type="button" data-act="source">Source</button>
+        <button type="button" data-act="focus-command">Open Command Window</button>
+        <button type="button" data-act="clear-all">Clear All Windows</button>
+        <hr>
+        <button type="button" data-act="exit">Exit</button>
+      </div>
+    </div>
+    <div class="menu"><button type="button">Edit</button>
+      <div class="drop">
+        <button type="button" data-act="cut">Cut</button>
+        <button type="button" data-act="copy">Copy</button>
+        <button type="button" data-act="paste">Paste</button>
+        <hr>
+        <button type="button" data-act="clear-all">Clear All Windows</button>
+        <hr>
+        <button type="button" data-act="settings">Settings / Preferences</button>
+        <button type="button" data-act="access">Access level</button>
+      </div>
+    </div>
+    <div class="menu"><button type="button">CAN</button>
+      <div class="drop">
+        <button type="button" data-act="clear-can">Clear CAN windows</button>
+        <hr>
+        <button type="button" data-act="filter-all">CAN log show ALL</button>
+        <button type="button" data-act="filter-none">CAN log show NONE</button>
+        <button type="button" data-act="filter-defaults">CAN log show DEFAULTS</button>
+        <hr>
+        <button type="button" data-act="connect">Connect virtual CAN</button>
+        <button type="button" data-act="connect-ixxat">Connect IXXAT</button>
+        <button type="button" data-act="disconnect">Disconnect CAN</button>
+        <hr>
+        <button type="button" data-act="tx">CAN message transmit window</button>
+      </div>
+    </div>
+    <div class="menu"><button type="button">Windows</button>
+      <div class="drop" id="window-menu">
+        <button type="button" data-panel="can">CAN Window</button>
+        <button type="button" data-panel="info">Information Window</button>
+        <button type="button" data-panel="command">Command Window</button>
+        <button type="button" data-panel="helper">Configuration Helper</button>
+      </div>
+    </div>
+    <div class="menu"><button type="button">Vehicle / Motor</button>
+      <div class="drop">
+        <button type="button" data-act="setup">Inverter setup wizard</button>
+        <button type="button" data-act="phases">3-phase identification</button>
+        <button type="button" data-act="cia402">Spin the shaft</button>
+        <button type="button" data-act="j1939">J1939 speed and torque</button>
+        <hr>
+        <button type="button" data-act="vehicle">Watch and record the bus</button>
+        <button type="button" data-act="trace">Graph speed and torque</button>
+        <hr>
+        <button type="button" data-act="ping">Find the controller</button>
+        <button type="button" data-act="faults">Fault codes</button>
+      </div>
+    </div>
+    <div class="menu"><button type="button">Plugins</button>
+      <div class="drop" id="plugin-menu">
+        <button type="button" disabled>None</button>
+        <hr>
+        <button type="button" data-act="install-plugin">Install new plugin from text file</button>
+      </div>
+    </div>
+    <div class="menu"><button type="button">Help</button>
+      <div class="drop">
+        <button type="button" data-act="help">Help</button>
+        <button type="button" data-act="faults">Open Fault Codes List</button>
+        <hr>
+        <button type="button" data-act="check-update">Check for updates</button>
+        <button type="button" data-act="about">About</button>
+      </div>
+    </div>
+  </nav>
+
+  <div id="toolbar">
+    <button type="button" data-act="source" title="Source a command script">Source</button>
+    <button type="button" data-act="focus-command" title="Open Command Window">Cmd</button>
+    <button type="button" data-act="clear-all" title="Clear all windows">Clear</button>
+    <span class="sep"></span>
+    <button type="button" data-act="cut" title="Cut">Cut</button>
+    <button type="button" data-act="copy" title="Copy">Copy</button>
+    <button type="button" data-act="paste" title="Paste">Paste</button>
+    <span class="sep"></span>
+    <span class="tool-label">CAN</span>
+    <button type="button" class="baud" data-baud="1000">1M</button>
+    <button type="button" class="baud" data-baud="800">800k</button>
+    <button type="button" class="baud" data-baud="500">500k</button>
+    <button type="button" class="baud" data-baud="250">250k</button>
+    <button type="button" class="baud" data-baud="125">125k</button>
+    <button type="button" class="baud" data-baud="100">100k</button>
+    <button type="button" class="baud" data-baud="50">50k</button>
+    <button type="button" class="baud" data-baud="20">20k</button>
+    <button type="button" id="cli-btn" title="CLI text from the controller adds bus load">CLI</button>
+    <span class="sep"></span>
+    <button type="button" data-act="vehicle" title="Watch and record messages on the CAN bus">Bus log</button>
+    <button type="button" data-act="trace" title="Graph speed, torque, current, and voltage">Graph</button>
+    <button type="button" data-act="ping" title="Look for the controller at this node number">Find</button>
+    <span class="sep"></span>
+    <button type="button" data-act="setup" title="Nameplate, slow test spin, and direction check">Setup</button>
+    <button type="button" data-act="phases" title="See how phases U, V and W light, and which way the shaft turns">Phases</button>
+    <button type="button" data-act="cia402" title="Turn the drive on and set a speed">Spin</button>
+    <button type="button" data-act="j1939" title="Send a J1939 speed or torque request">J1939</button>
+    <span class="sep"></span>
+    <button type="button" data-act="access" title="Access level">Access</button>
+    <button type="button" data-act="settings" title="Settings">Settings</button>
+    <span class="grow"></span>
+    <button type="button" data-act="help">Help</button>
+  </div>
+
+  <div id="guide">
+    <button type="button" id="g1" data-act="ping" title="Ask node 1 to answer"><b>1</b> Find the controller</button>
+    <button type="button" id="g2" data-act="guide-run" title="Put the controller into the run state"><b>2</b> Allow it to run</button>
+    <button type="button" id="g3" data-act="cia402" title="Enable the drive and set a speed"><b>3</b> Spin the shaft</button>
+    <button type="button" id="g4" data-act="phases" title="See the U, V, W order and the shaft direction"><b>4</b> Check the 3 phases</button>
+  </div>
+
+  <div id="workspace">
+    <div id="left">
+      <section id="can" class="pane">
+        <header class="pane-h">
+          <span title="Every message on the CAN bus">Bus messages</span>
+          <span class="tabs">
+            <button type="button" class="tab on" data-cantab="log">Log</button>
+            <button type="button" class="tab" data-cantab="msg">Messages</button>
+          </span>
+          <span class="grow"></span>
+          <button type="button" class="icon" data-act="clear-can" title="Clear CAN">×</button>
+        </header>
+        <div class="pane-body can-body">
+          <div class="table-wrap" id="can-log-wrap">
+            <table id="can-table">
+              <thead>
+                <tr>
+                  <th>MsgID</th><th>Time</th><th>Type</th>
+                  <th>0</th><th>1</th><th>2</th><th>3</th><th>4</th><th>5</th><th>6</th><th>7</th>
+                </tr>
+              </thead>
+              <tbody id="can-body"></tbody>
+            </table>
+          </div>
+          <div class="table-wrap hidden" id="can-msg-wrap">
+            <table>
+              <thead><tr><th>Time</th><th>Type</th><th>Message</th></tr></thead>
+              <tbody id="can-msg-body"></tbody>
+            </table>
+          </div>
+          <div id="filters">
+            <div class="rail-title">Show</div>
+            <button type="button" data-filter="pdo" title="Fast repeating values, such as speed and torque">PDO</button>
+            <button type="button" data-filter="sdo" title="Settings being read or written">SDO</button>
+            <button type="button" data-filter="nmt" title="Controller heartbeat and run/stop commands">NMT</button>
+            <button type="button" data-filter="emcy" title="Fault messages">EMCY</button>
+            <button type="button" data-filter="sync" title="Clock pulse for the bus">SYNC</button>
+            <button type="button" data-filter="tx" title="Messages this program sent">TX</button>
+            <button type="button" data-filter="j1939" title="Vehicle network messages">J1939</button>
+            <button type="button" data-filter="uds" title="Diagnostic requests">UDS</button>
+            <button type="button" data-filter="debug" title="Text from the controller">DEBUG</button>
+            <button type="button" data-filter="unknown" title="Anything that does not match the types above">OTHER</button>
+          </div>
+        </div>
+      </section>
+      <div class="split v" data-split="top"></div>
+      <section id="info" class="pane">
+        <header class="pane-h">
+          <span title="Plain notes about what the program just did">Activity</span>
+          <span class="grow"></span>
+          <button type="button" class="icon" data-act="clear-info" title="Clear">×</button>
+        </header>
+        <div id="info-log" class="log"></div>
+      </section>
+      <div class="split v" data-split="bot"></div>
+      <section id="command" class="pane">
+        <header class="pane-h">
+          <span title="Type help to see every command">Commands</span>
+          <span class="grow"></span>
+          <input id="cmd-search" placeholder="Search commands" spellcheck="false">
+          <button type="button" class="icon" data-act="help" title="Help">?</button>
+        </header>
+        <div id="cmd-log"></div>
+        <div id="cmd-line">
+          <span id="prompt">z-dvt(1) %</span>
+          <input id="cmd" spellcheck="false" autocomplete="off" aria-label="Command">
+        </div>
+      </section>
+    </div>
+    <div class="split h" data-split="mid"></div>
+    <section id="helper" class="pane">
+      <header class="pane-h helper-h">
+        <span class="tool-label" title="CANopen node number, usually 1">Controller</span>
+        <input id="node-id" type="number" min="1" max="127" value="1" title="Controller number">
+        <button type="button" id="ping-btn" title="Ask this controller to answer">Find</button>
+        <span id="node-pill">Not connected yet</span>
+        <button type="button" id="op-btn" hidden>Request Operational</button>
+        <span class="grow"></span>
+        <div class="menu end">
+          <button type="button" id="dcf-menu-btn" title="A DCF file is a saved copy of the controller settings">Settings file</button>
+          <div class="drop">
+            <button type="button" data-act="open-dcf">Open a settings file</button>
+            <button type="button" data-act="compare-dcf">Compare two settings files</button>
+            <button type="button" data-act="pull-dcf">Save the live controller into a file</button>
+          </div>
+        </div>
+        <button type="button" data-act="help">Help</button>
+      </header>
+      <div class="tabs" id="helper-tabs">
+        <button type="button" class="tab on" data-htab="main">Overview</button>
+        <button type="button" class="tab" data-htab="tree" title="Every setting, listed by name">All settings</button>
+        <button type="button" class="tab" data-htab="io">Inputs</button>
+        <button type="button" class="tab" data-htab="pdo" title="Which values are sent automatically on the bus">Bus data</button>
+      </div>
+      <div id="htab-main" class="htab">
+        <div id="offline-view">
+          <h3>Start here</h3>
+          <p class="note">The controller number is usually 1. Press Find. When it answers, the speed and temperature appear here.</p>
+          <button type="button" data-act="setup">Set up this inverter</button>
+          <button type="button" id="boot-ping">Find the controller</button>
+          <h3>Without a controller</h3>
+          <button type="button" class="linkish" data-act="open-dcf">Open a saved settings file</button>
+          <button type="button" class="linkish" data-act="compare-dcf">Compare two settings files</button>
+          <button type="button" class="linkish" data-act="coast">Work out drag torque from a coast-down</button>
+          <button type="button" class="linkish" data-act="phases">Open the 3-phase motor picture</button>
+        </div>
+        <div id="online-view" class="hidden">
+          <div id="identity"></div>
+          <div id="nameplate-card" class="note"></div>
+          <div id="gauges"></div>
+          <div id="main-actions"></div>
+        </div>
+      </div>
+      <div id="htab-tree" class="htab hidden">
+        <input id="tree-search" placeholder="Search name or index" spellcheck="false">
+        <div id="tree"></div>
+      </div>
+      <div id="htab-io" class="htab hidden"><div id="io-list"></div></div>
+      <div id="htab-pdo" class="htab hidden"><div id="pdo-list"></div></div>
+    </section>
+  </div>
+
+  <div id="update-bar" hidden>
+    <span id="update-text"></span>
+    <span class="grow"></span>
+    <button type="button" id="update-go">Download and install</button>
+    <button type="button" id="update-later">Later</button>
+  </div>
+
+  <footer id="statusbar">
+    <button type="button" id="st-cli">CLI debug</button>
+    <span id="st-main">Starting</span>
+    <span class="grow"></span>
+    <span id="st-progress"></span>
+    <span id="st-helper">Not connected yet</span>
+    <span id="credit">Crafted by Z-Jomant Meister</span>
+  </footer>
+</div>
+
+<dialog id="dlg-help"><form method="dialog"><header><b>Help</b><button value="cancel">Close</button></header><div class="dlg-body" id="help-body"></div></form></dialog>
+<dialog id="dlg-about"><form method="dialog"><header><b>About</b><button value="cancel">Close</button></header><div class="dlg-body" id="about-body"></div></form></dialog>
+<dialog id="dlg-settings"><form method="dialog"><header><b>Settings</b><button value="cancel">Close</button></header>
+  <div class="dlg-body">
+    <label>SDO timeout <select id="set-timeout"><option>1000</option><option>2000</option><option>5000</option></select> ms</label>
+    <label>J1939 address of this tool <input id="set-sa" type="number" min="0" max="253" value="250"></label>
+    <label>Access <select id="set-level"><option value="engineer">Engineer (read and write)</option><option value="operator">Operator (read only)</option></select></label>
+    <p class="note">Bitrate and CAN filters are on the toolbar. They are saved on this PC.</p>
+    <button type="button" id="set-save" value="default">Save</button>
+  </div>
+</form></dialog>
+<dialog id="dlg-vehicle"><form method="dialog"><header><b>Vehicle Interface</b><button value="cancel">Close</button></header>
+  <div class="dlg-body">
+    <div class="row">
+      <button type="button" id="rec-start">Record</button>
+      <button type="button" id="rec-stop">Stop and save CSV</button>
+      <span id="rec-state"></span>
+    </div>
+    <div class="scroll" id="veh-log"></div>
+  </div>
+</form></dialog>
+<dialog id="dlg-j1939"><form method="dialog"><header><b>J1939 motor demand</b><button value="cancel">Close</button></header>
+  <div class="dlg-body">
+    <p class="note">Standard TSC1 (PGN 0). Enable the drive from the CANopen 402 window first if you want the shaft to turn.</p>
+    <label>Destination address <input id="j-dest" type="number" min="0" max="253" value="33"></label>
+    <label><input id="j-speed-on" type="checkbox"> Requested speed <input id="j-speed" type="number" value="0"> rpm</label>
+    <label><input id="j-torque-on" type="checkbox" checked> Requested torque <input id="j-torque" type="number" value="0" min="-125" max="125"> %</label>
+    <label><input id="j-hold" type="checkbox"> Hold (send about 10 times a second)</label>
+    <button type="button" id="j-send">Send once</button>
+  </div>
+</form></dialog>
+<dialog id="dlg-402"><form method="dialog"><header><b>Spin the shaft</b><button value="cancel">Close</button></header>
+  <div class="dlg-body">
+    <p class="note">Turn the drive fully on with Enable operation, then set a speed in rpm. Positive speed is the normal direction. Negative speed reverses it.</p>
+    <div class="row" id="cw-buttons">
+      <button type="button" data-dem="shutdown">Shutdown</button>
+      <button type="button" data-dem="switchon">Switch on</button>
+      <button type="button" data-dem="enable">Enable operation</button>
+      <button type="button" data-dem="quickstop">Quick stop</button>
+      <button type="button" data-dem="disable">Disable voltage</button>
+      <button type="button" data-dem="faultreset">Fault reset</button>
+    </div>
+    <label>Mode
+      <select id="dem-mode">
+        <option value="pv">Profile velocity</option>
+        <option value="tq">Profile torque</option>
+        <option value="pp">Profile position</option>
+      </select>
+    </label>
+    <label>Target velocity <input id="dem-vel" type="number" value="0"> rpm <button type="button" id="dem-vel-go">Set</button></label>
+    <label>Target torque <input id="dem-tq" type="number" value="0" step="0.1"> % <button type="button" id="dem-tq-go">Set</button></label>
+    <div id="dem-live" class="note"></div>
+  </div>
+</form></dialog>
+<dialog id="dlg-trace"><form method="dialog"><header><b>Detail Trace</b><button value="cancel">Close</button></header>
+  <div class="dlg-body">
+    <div class="row">
+      <button type="button" id="tr-arm">Arm</button>
+      <button type="button" id="tr-stop">Stop</button>
+      <button type="button" id="tr-csv">Save CSV</button>
+      <span id="tr-state"></span>
+    </div>
+    <canvas id="trace-canvas" width="900" height="280"></canvas>
+  </div>
+</form></dialog>
+<dialog id="dlg-tx"><form method="dialog"><header><b>CAN transmit</b><button value="cancel">Close</button></header>
+  <div class="dlg-body">
+    <label>ID <input id="tx-id" value="0x181" spellcheck="false"></label>
+    <label><input id="tx-ext" type="checkbox"> 29-bit</label>
+    <label>Data <input id="tx-data" value="00 00 00 00 00 00 00 00" spellcheck="false"></label>
+    <label><input id="tx-hold" type="checkbox"> Repeat every <input id="tx-every" type="number" value="100" min="10"> ms</label>
+    <button type="button" id="tx-send">Send</button>
+  </div>
+</form></dialog>
+<dialog id="dlg-compare"><form method="dialog"><header><b>Compare DCF files</b><button value="cancel">Close</button></header>
+  <div class="dlg-body">
+    <label>File A <input id="cmp-a" type="file" accept=".dcf,.eds,.txt"></label>
+    <label>File B <input id="cmp-b" type="file" accept=".dcf,.eds,.txt"></label>
+    <label><input id="cmp-ro" type="checkbox" checked> Ignore read-only objects</label>
+    <button type="button" id="cmp-go">Compare</button>
+    <button type="button" id="cmp-copy">Copy CSV</button>
+    <div class="scroll" id="cmp-out"></div>
+  </div>
+</form></dialog>
+<dialog id="dlg-faults"><form method="dialog"><header><b>Fault codes</b><button value="cancel">Close</button></header>
+  <div class="dlg-body">
+    <p class="note">Each fault is named the way it shows up on the bench, with the first thing to check.</p>
+    <div id="fault-live"></div>
+    <div id="fault-list"></div>
+    <button type="button" id="fault-clear">Fault reset</button>
+  </div>
+</form></dialog>
+<dialog id="dlg-setup"><form method="dialog">
+  <header><b>Inverter setup</b><button value="cancel">Close</button></header>
+  <div class="dlg-body">
+    <div id="wiz-pips" class="wiz-pips">
+      <span data-wiz="1">1 Nameplate</span>
+      <span data-wiz="2">2 Find</span>
+      <span data-wiz="3">3 Slow spin</span>
+      <span data-wiz="4">4 Direction</span>
+      <span data-wiz="5">5 Save</span>
+    </div>
+    <section id="wiz-1" class="wiz-page">
+      <p class="note">Enter the motor and pack the way they are printed on the nameplate. The next step writes these into the controller.</p>
+      <label>Motor name <input id="np-name" value="Demo PM"></label>
+      <label>Pole pairs <input id="np-poles" type="number" min="1" max="64" value="4"></label>
+      <label>Rated current <input id="np-amps" type="number" min="0" step="0.1" value="200"> A</label>
+      <label>Rated DC voltage <input id="np-volts" type="number" min="0" step="1" value="500"> V</label>
+      <label>Top speed <input id="np-rpm" type="number" min="1" value="3000"> rpm</label>
+      <label>Encoder <input id="np-ppr" type="number" min="1" value="1024"> pulses per turn</label>
+    </section>
+    <section id="wiz-2" class="wiz-page hidden">
+      <p class="note">The controller number is in the box at the top of the helper. It is usually 1.</p>
+      <button type="button" id="wiz-find">Find the controller and store the nameplate</button>
+      <p id="wiz-find-result" class="note"></p>
+    </section>
+    <section id="wiz-3" class="wiz-page hidden">
+      <p class="note">This turns the shaft up to 100 rpm for a few seconds, then stops. If it does not move, the test says what to check.</p>
+      <button type="button" id="wiz-spin">Run the slow test</button>
+      <p id="wiz-spin-result" class="note"></p>
+    </section>
+    <section id="wiz-4" class="wiz-page hidden">
+      <p class="note">The shaft turns slowly again. Watch the real motor, or the phase picture, and answer from the direction the vehicle needs.</p>
+      <button type="button" id="wiz-dir-run">Turn the shaft for the direction check</button>
+      <p id="wiz-dir-result" class="note"></p>
+      <div class="row">
+        <button type="button" id="wiz-yes">Yes, that direction is right</button>
+        <button type="button" id="wiz-no">No, it turned the wrong way</button>
+      </div>
+    </section>
+    <section id="wiz-5" class="wiz-page hidden">
+      <p id="wiz-summary" class="note"></p>
+      <button type="button" id="wiz-save">Save the setup sheet and the settings file</button>
+      <p id="wiz-save-result" class="note"></p>
+    </section>
+    <div class="row">
+      <button type="button" id="wiz-back">Back</button>
+      <button type="button" id="wiz-next">Next</button>
+    </div>
+  </div>
+</form></dialog>
+<dialog id="dlg-phases"><form method="dialog"><header><b>3-phase identification</b><button type="button" data-close="1">Close</button></header>
+  <div class="dlg-body">
+    <p class="note">Three leads leave the motor: U, V and W. They light in a circle, and the shaft follows that circle. Swap any two leads and the shaft turns the other way. On a real bench, V and W are the usual pair to swap.</p>
+    <div class="motor-layout">
+      <svg id="motor-svg" viewBox="0 0 340 340" role="img" aria-label="Animated three phase motor">
+        <defs>
+          <marker id="arrow-head" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M 0 1.2 L 8 5 L 0 8.8 z" fill="#9ecbff"/>
+          </marker>
+        </defs>
+        <circle cx="170" cy="170" r="158" fill="#071428"/>
+        <circle cx="170" cy="170" r="132" fill="none" stroke="#16345c" stroke-width="34"/>
+        <path id="arrow-cw" d="M250 58 A128 128 0 0 1 300 128" fill="none" stroke="#9ecbff" stroke-width="3" marker-end="url(#arrow-head)"/>
+        <path id="arrow-ccw" d="M90 58 A128 128 0 0 0 40 128" fill="none" stroke="#f0c27a" stroke-width="3" marker-end="url(#arrow-head)" opacity="0"/>
+        <g id="coil-u" transform="translate(170 46)">
+          <circle r="26" class="coil-body"/>
+          <text class="coil-label" dy="5">U</text>
+        </g>
+        <g id="coil-v" transform="translate(277 232)">
+          <circle r="26" class="coil-body"/>
+          <text class="coil-label" dy="5">V</text>
+        </g>
+        <g id="coil-w" transform="translate(63 232)">
+          <circle r="26" class="coil-body"/>
+          <text class="coil-label" dy="5">W</text>
+        </g>
+        <g id="rotor-spin">
+          <circle cx="170" cy="170" r="54" fill="#0c1d36" stroke="#8eabd0" stroke-width="2"/>
+          <path d="M170 170 L170 124" stroke="#9ecbff" stroke-width="8" stroke-linecap="round"/>
+          <circle cx="170" cy="122" r="8" fill="#f0c27a"/>
+          
+        </g>
+      </svg>
+      <div class="motor-side">
+        <div class="amp"><span>U</span><span class="track"><i id="bar-u"></i></span></div>
+        <div class="amp"><span>V</span><span class="track"><i id="bar-v"></i></span></div>
+        <div class="amp"><span>W</span><span class="track"><i id="bar-w"></i></span></div>
+        <p id="phase-readout" class="note"></p>
+        <div class="row">
+          <button type="button" id="ph-u">Light U only</button>
+          <button type="button" id="ph-v">Light V only</button>
+          <button type="button" id="ph-w">Light W only</button>
+        </div>
+        <div class="row">
+          <button type="button" id="ph-run">Run the field</button>
+          <button type="button" id="ph-swap">Swap V and W</button>
+        </div>
+        <label><input id="ph-follow" type="checkbox" checked> Follow the bench speed when the shaft is turning</label>
+        <button type="button" id="ph-bench">Start the bench at 600 rpm</button>
+      </div>
+    </div>
+  </div>
+</form></dialog>
+<dialog id="dlg-coast"><form method="dialog"><header><b>Coast-down torque</b><button value="cancel">Close</button></header>
+  <div class="dlg-body">
+    <p class="note">Paste a speed trace as time (seconds) and speed (rpm). Torque is inertia times angular acceleration.</p>
+    <label>Inertia <input id="coast-i" type="number" value="0.02" step="0.001"> kg·m²</label>
+    <textarea id="coast-text" rows="8" spellcheck="false">0.0, 3000
+0.5, 2400
+1.0, 1900
+1.5, 1500</textarea>
+    <button type="button" id="coast-go">Calculate</button>
+    <pre id="coast-out"></pre>
+  </div>
+</form></dialog>
+
+<input id="file-source" type="file" accept=".txt,.dvt,.cfg" hidden>
+<input id="file-dcf" type="file" accept=".dcf,.eds,.txt" hidden>
+<input id="file-plugin" type="file" accept=".txt" hidden>
+<script src="app.js"></script>
+</body>
+</html>
