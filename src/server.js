@@ -2,10 +2,12 @@
 
 const http = require("http");
 const fs = require("fs");
+const os = require("os");
 const path = require("path");
 const { spawn } = require("child_process");
 const { Workbench, helpRows } = require("./engine");
 const updater = require("./update");
+const { settingsDir } = require("./paths");
 
 const PORT = Number(process.env.DVT_PORT) || 8755;
 const publicDir = path.resolve(__dirname, "..", "public");
@@ -117,8 +119,28 @@ function browserCandidates() {
   ].filter((file) => file && fs.existsSync(file));
 }
 
+function macBrowserApp() {
+  const home = os.homedir();
+  const apps = [
+    "/Applications/Google Chrome.app",
+    path.join(home, "Applications", "Google Chrome.app"),
+    "/Applications/Microsoft Edge.app",
+    path.join(home, "Applications", "Microsoft Edge.app"),
+  ];
+  return apps.find((app) => fs.existsSync(app)) || "";
+}
+
 function openBrowser(port) {
   const url = "http://127.0.0.1:" + port;
+  if (process.platform === "darwin") {
+    const app = macBrowserApp();
+    if (app) {
+      spawn("open", ["-na", app, "--args", "--app=" + url, "--window-size=1500,940"], { detached: true, stdio: "ignore" }).unref();
+      return;
+    }
+    spawn("open", [url], { detached: true, stdio: "ignore" }).unref();
+    return;
+  }
   const browsers = browserCandidates();
   if (!browsers.length) {
     spawn("cmd", ["/c", "start", "", url], { detached: true, stdio: "ignore" }).unref();
@@ -139,7 +161,7 @@ async function main() {
     }
     throw err;
   }
-  const logDir = path.join(process.env.APPDATA || process.cwd(), "ZDVTWorkbench");
+  const logDir = settingsDir();
   try {
     fs.mkdirSync(logDir, { recursive: true });
     fs.appendFileSync(path.join(logDir, "server.log"), new Date().toISOString() + " listening " + PORT + "\n");

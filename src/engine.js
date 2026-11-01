@@ -2,10 +2,10 @@
 
 const fs = require("fs");
 const path = require("path");
-const os = require("os");
 const dcf = require("./dcf");
 const ixxat = require("./ixxat");
 const updater = require("./update");
+const { settingsPath } = require("./paths");
 
 const VERSION = require("../package.json").version;
 const FILTER_NAMES = ["pdo", "sdo", "nmt", "emcy", "sync", "tx", "j1939", "uds", "debug", "unknown"];
@@ -43,11 +43,6 @@ const MODE_ENUM = [
   { v: 3, t: "Profile velocity" },
   { v: 4, t: "Profile torque" },
 ];
-
-function settingsPath() {
-  const dir = path.join(process.env.APPDATA || path.join(os.homedir(), "AppData", "Roaming"), "ZDVTWorkbench");
-  return { dir, file: path.join(dir, "settings.json") };
-}
 
 function clamp(n, lo, hi) {
   return Math.max(lo, Math.min(hi, n));
@@ -758,7 +753,11 @@ class Workbench {
     this.started = Date.now();
     this.info("Z-DVT Workbench is ready. Crafted by Z-Jomant Meister.", "help");
     this.info("A practice controller is already on the bus as number " + this.node.id + ". It stays paused until you allow it to run.", "info");
-    this.info("CAN menu, Connect IXXAT, talks to the dongle through the VCI library. The practice controller pauses, and the Tcl license DLL is not loaded.", "info");
+    if (process.platform === "darwin") {
+      this.info("On this Mac, Connect virtual CAN runs the practice controller. Connect IXXAT uses the Windows VCI library (vcinpl.dll).", "info");
+    } else {
+      this.info("CAN menu, Connect IXXAT, talks to the dongle through the VCI library. The practice controller pauses, and the Tcl license DLL is not loaded.", "info");
+    }
     this.info("Follow the four steps: find the controller, allow it to run, spin the shaft, then check the 3 phases.", "info");
     this.node.reply(0x700 + this.node.id, [0]);
     this.timer = setInterval(() => this.tick(0.1), 100);
@@ -1905,6 +1904,7 @@ class Workbench {
         if (msg.install) return await this.installUpdate();
         this.updateOffer = await updater.check(VERSION);
         if (this.updateOffer) this.info("Version " + this.updateOffer.version + " is available.", "help");
+        else if (process.platform === "darwin") this.info("This Mac copy follows the macos branch. In the project folder, run git pull.", "info");
         else this.info("Z-DVT Workbench " + VERSION + " is up to date.", "info");
         return { ok: true, update: this.updateOffer };
       } catch (err) {

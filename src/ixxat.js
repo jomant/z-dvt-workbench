@@ -47,6 +47,9 @@ function codeOf(hr) {
 
 function bind() {
   if (api) return api;
+  if (process.platform !== "win32") {
+    throw new Error("The IXXAT VCI library (vcinpl.dll) ships with the Windows VCI driver. Use Connect virtual CAN on this computer.");
+  }
   let koffi;
   try {
     koffi = require("koffi");

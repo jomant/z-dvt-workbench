@@ -851,9 +851,26 @@ const HELP = [
   ["Not included", "This is not a BorgWarner or Sevcon product. It does not program vendor firmware, does not implement a vendor security unlock, and does not ship the vendor object database. A DCF you already have still opens, because those names are stored in the file."],
 ];
 
+function onMac() {
+  return /Mac/i.test(navigator.platform || "") || /Macintosh/.test(navigator.userAgent || "");
+}
+
 function fillHelp() {
-  $("help-body").innerHTML = HELP.map(([title, body]) => `<h2>${esc(title)}</h2><p>${esc(body)}</p>`).join("");
-  $("about-body").innerHTML = `<p><b>Z-DVT Workbench ${ui.latest ? ui.latest.version : "2026.09"}</b></p><p><b>Crafted by Z-Jomant Meister</b></p><p>Z-DVT Workbench replaces the customer configuration workflow. DVT Customer 2025.05b on this PC reports that its VCI4 Tcl 9 DLL will not load, and that release is no longer updated.</p><p>Practice controller 1 speaks CANopen and a small J1939 speed and torque demand. Connect IXXAT on the CAN menu talks to a USB-CAN dongle through the VCI library instead. Saved DCF settings files can be edited and compared offline.</p><p>Not affiliated with BorgWarner or Sevcon.</p>`;
+  const mac = onMac();
+  const rows = HELP.map(([title, body]) => {
+    if (mac && title === "IXXAT adapter") {
+      return [title, "On this Mac, Connect virtual CAN runs the practice controller. Connect IXXAT uses the Windows VCI library (vcinpl.dll). The practice controller is already on the bus as number 1."];
+    }
+    if (mac && title === "Updates") {
+      return [title, "This Mac copy follows the macos branch. In the project folder, run git pull, then start the workbench again. The Windows setup program stays on the main branch."];
+    }
+    return [title, body];
+  });
+  $("help-body").innerHTML = rows.map(([title, body]) => `<h2>${esc(title)}</h2><p>${esc(body)}</p>`).join("");
+  const ixxat = mac
+    ? "On this Mac the practice controller is the bus. Connect IXXAT uses the Windows VCI library."
+    : "Connect IXXAT on the CAN menu talks to a USB-CAN dongle through the VCI library instead.";
+  $("about-body").innerHTML = `<p><b>Z-DVT Workbench ${ui.latest ? ui.latest.version : "2026.09"}</b></p><p><b>Crafted by Z-Jomant Meister</b></p><p>Z-DVT Workbench replaces the customer configuration workflow. DVT Customer 2025.05b on this PC reports that its VCI4 Tcl 9 DLL will not load, and that release is no longer updated.</p><p>Practice controller 1 speaks CANopen and a small J1939 speed and torque demand. ${ixxat} Saved DCF settings files can be edited and compared offline.</p><p>Not affiliated with BorgWarner or Sevcon.</p>`;
 }
 
 async function onAction(name) {

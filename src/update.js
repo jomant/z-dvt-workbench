@@ -28,6 +28,7 @@ function newerThan(remote, local) {
 
 async function check(localVersion) {
   if (process.env.ZDVT_NO_UPDATE === "1") return null;
+  if (process.platform !== "win32") return null;
   const response = await fetch("https://api.github.com/repos/" + REPO + "/releases/latest", {
     headers: {
       Accept: "application/vnd.github+json",
@@ -62,6 +63,9 @@ async function download(offer) {
 }
 
 function launchInstaller(file) {
+  if (process.platform !== "win32") {
+    throw new Error("The setup program is the Windows installer. On this Mac, update the macos branch with git pull.");
+  }
   const quoted = "'" + String(file).replace(/'/g, "''") + "'";
   const child = spawn("powershell.exe", [
     "-NoProfile",
