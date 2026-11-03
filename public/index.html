@@ -299,7 +299,12 @@
 </form></dialog>
 <dialog id="dlg-402"><form method="dialog"><header><b>Spin the shaft</b><button value="cancel">Close</button></header>
   <div class="dlg-body">
-    <p class="note">Set profile velocity, then Shutdown, Switch on, and Enable operation. Send a speed only when the state line says Operation enabled. Positive speed is the normal direction. Negative speed reverses it.</p>
+    <p class="note">Pre-operational lets setup writes through. Operational is the state used to run. Profile velocity is written to object 0x6060, or to object 0x2900 when 0x6060 is missing. Then Shutdown, Switch on, and Enable operation. Send a speed only when the state line says Operation enabled. Positive speed is the normal direction. Negative speed reverses it.</p>
+    <div class="row">
+      <button type="button" data-motor="preop">Pre-operational</button>
+      <button type="button" data-motor="operational">Operational</button>
+    </div>
+    <p id="dem-motor" class="note"></p>
     <div class="row" id="cw-buttons">
       <button type="button" data-dem="shutdown">Shutdown</button>
       <button type="button" data-dem="switchon">Switch on</button>
@@ -383,7 +388,12 @@
       <p id="wiz-find-result" class="note"></p>
     </section>
     <section id="wiz-3" class="wiz-page hidden">
-      <p class="note">This turns the shaft up to 100 rpm for a few seconds, then stops. If it does not move, the test says what to check.</p>
+      <p class="note">This turns the shaft up to 100 rpm for a few seconds, then stops. The test sets Pre-operational, writes the mode, then returns to Operational. Use the buttons to change the motor state yourself.</p>
+      <div class="row">
+        <button type="button" data-motor="preop">Pre-operational</button>
+        <button type="button" data-motor="operational">Operational</button>
+      </div>
+      <p id="wiz-motor" class="note"></p>
       <button type="button" id="wiz-spin">Run the slow test</button>
       <p id="wiz-spin-result" class="note"></p>
     </section>

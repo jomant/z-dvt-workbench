@@ -612,7 +612,8 @@ class VirtualNode {
     set(0x2100, 3, Math.round(this.tempC * 10));
     set(0x2100, 4, Math.round(this.current));
     set(0x6041, 0, this.statusword());
-    set(0x6061, 0, Number(this.get(0x6060, 0).value) || 0);
+    const modeObj = this.get(0x6060, 0);
+    set(0x6061, 0, Number(modeObj && modeObj.value) || 0);
     set(0x1001, 0, this.errorRegister & 0xff);
     set(0x603f, 0, this.faultCode & 0xffff);
     set(0x2002, 6, this.driveState === "operation enabled" ? 0x01 : 0x00);
@@ -620,7 +621,8 @@ class VirtualNode {
 
   tick(dt, cli) {
     const enabled = this.driveState === "operation enabled" && this.nmt === 5;
-    const mode = Number(this.get(0x6060, 0).value) || 3;
+    const modeLive = this.get(0x6060, 0);
+    const mode = Number(modeLive && modeLive.value) || 3;
     const maxV = Number(this.get(0x2001, 2).value) || 6000;
     const accel = Number(this.get(0x2001, 3).value) || 2000;
     const decel = Number(this.get(0x2001, 4).value) || 2000;
@@ -1389,17 +1391,117 @@ class Workbench {
     }
   }
 
+  nmtLabel(code) {
+    const word = Number(code) >>> 0;
+    if (word === 5) return "Operational";
+    if (word === 127) return "Pre-operational";
+    if (word === 4) return "Stopped";
+    if (word === 0) return "Boot-up";
+    return "";
+  }
+
+  async readStateByte(node, index) {
+    try {
+      const bytes = await this.readRaw(node, index, 0);
+      if (!bytes || !bytes.length) return { known: false };
+      return { known: true, value: bytes[0] & 0xff };
+    } catch (err) {
+      if (this.objectMissing(err)) return { known: false, missing: true };
+      return { known: false, error: String(err && err.message || err) };
+    }
+  }
+
+  async writeByte(node, index, value, force) {
+    const live = node === this.node.id ? this.liveObject(index, 0) : null;
+    const fromFile = this.dcfDoc && this.dcfDoc.objects.find((item) => item.index === index && item.sub === 0);
+    if (live || fromFile || this.adapter !== "ixxat") {
+      await this.writeObject(node, index, 0, value, force);
+      return;
+    }
+    await this.writeRaw(node, index, 0, [Number(value) & 0xff], force);
+  }
+
+  async setMotorState(which) {
+    const node = this.selectedNode;
+    const preop = which === "preop" || which === "pre-operational";
+    const wanted = preop ? "Pre-operational" : "Operational";
+    let via = "NMT";
+    const seen = await this.readOptional(node, 0x2800, 0);
+    if (!seen.missing) {
+      try {
+        await this.writeByte(node, 0x2800, preop ? 1 : 0, true);
+        via = "0x2800";
+      } catch (err) {
+        if (!this.objectMissing(err)) throw err;
+      }
+    }
+    this.nmt(preop ? "preop" : "start", node);
+    const status = await this.readStateByte(node, 0x5110);
+    let state = status.known ? this.nmtLabel(status.value) : "";
+    if (!state && this.adapter !== "ixxat") state = this.nmtLabel(this.node.nmt);
+    if (!state && this.adapter === "ixxat") state = this.nmtLabel(this.remoteNmt);
+    if (status.known && state) this.remoteNmt = Number(status.value) >>> 0;
+    const shown = state || wanted;
+    this.info("Motor state requested " + wanted + " through " + via + ". State is " + shown + ".", "help");
+    return { state: shown, via, requested: wanted };
+  }
+
+  async readMotorState() {
+    const node = this.selectedNode;
+    const status = await this.readStateByte(node, 0x5110);
+    let state = status.known ? this.nmtLabel(status.value) : "";
+    if (!state && this.adapter !== "ixxat") state = this.nmtLabel(this.node.nmt);
+    if (!state && this.adapter === "ixxat") state = this.nmtLabel(this.remoteNmt);
+    return { state: state || "Unknown", via: status.known ? "0x5110" : "NMT" };
+  }
+
   async commissionVelocity(force) {
     const node = this.selectedNode;
+    await this.setMotorState("preop");
+    let modeWhere = "";
     try {
       await this.writeDrive(node, 0x6060, 0, 3, force);
+      modeWhere = "0x6060";
+    } catch (err) {
+      if (!(err && err.missing === 0x6060)) {
+        this.commandRpm = 0;
+        this.motionReady = false;
+        throw err;
+      }
+      try {
+        await this.writeByte(node, 0x2900, 3, force);
+        modeWhere = "0x2900";
+      } catch (modeErr) {
+        if (!this.objectMissing(modeErr)) {
+          this.commandRpm = 0;
+          this.motionReady = false;
+          throw modeErr;
+        }
+      }
+    }
+    let control = true;
+    try {
       await this.writeDrive(node, 0x6040, 0, 0x0006, force);
       await this.writeDrive(node, 0x6040, 0, 0x0007, force);
       await this.writeDrive(node, 0x6040, 0, 0x000f, force);
     } catch (err) {
+      if (!(err && err.missing === 0x6040)) {
+        this.commandRpm = 0;
+        this.motionReady = false;
+        throw err;
+      }
+      control = false;
+    }
+    await this.setMotorState("operational");
+    if (!control) {
       this.commandRpm = 0;
       this.motionReady = false;
-      throw err;
+      const modeNote = modeWhere === "0x2900"
+        ? "Profile velocity was written to object 0x2900 because object 0x6060 is not in this controller. "
+        : modeWhere === "0x6060"
+          ? "Profile velocity was written to object 0x6060. "
+          : "Objects 0x6060 and 0x2900 are not in this controller. ";
+      throw new Error(modeNote + "Object 0x6040 is not in this controller, so there is no CiA 402 controlword. Motor state is Operational. The slow spin leaves the shaft stopped.");
     }
     if (this.node.nmt !== 5) this.nmt("start", node);
     const mode = await this.readOptional(node, 0x6061, 0);
@@ -1482,7 +1584,7 @@ class Workbench {
   async probeDrive(nodeId) {
     const node = nodeId || this.selectedNode;
     const missing = [];
-    for (const index of [0x6040, 0x6060, 0x60ff]) {
+    for (const index of [0x6040, 0x6060, 0x60ff, 0x2900, 0x2800]) {
       try {
         await this.readRaw(node, index, 0);
       } catch (err) {
@@ -1495,7 +1597,7 @@ class Workbench {
         return { ok: true, known: false, missing, canSpin: false, error: text };
       }
     }
-    const canSpin = !missing.includes("0x6040") && !missing.includes("0x6060") && !missing.includes("0x60FF");
+    const canSpin = !missing.includes("0x6040") && !missing.includes("0x60FF");
     return { ok: true, known: true, missing, canSpin };
   }
 
@@ -2288,6 +2390,16 @@ class Workbench {
     if (type === "probe402") return this.probeDrive(msg.node);
     if (type === "estop") return this.estop();
     if (type === "nudge") return this.nudgeSpeed(msg.dir);
+    if (type === "motorState") {
+      try {
+        if (msg.node) this.selectedNode = Number(msg.node) || this.selectedNode;
+        const result = msg.op === "read" ? await this.readMotorState() : await this.setMotorState(msg.op);
+        return Object.assign({ ok: true }, result);
+      } catch (err) {
+        this.info(err.message, "error");
+        return { ok: false, error: err.message };
+      }
+    }
     if (type === "cia402") {
       try {
         const result = await this.demand(msg.op, msg.value);

@@ -488,6 +488,32 @@ function nameplateFrom(s) {
 
 const wiz = { step: 1, found: false, spinTried: false, spinOk: false, spinHardware: false, noControlword: false, dirReady: false, direction: "" };
 
+function paintMotorState(result) {
+  const text = result && result.ok
+    ? "Motor state is " + result.state + "."
+    : ((result && result.error) || "Motor state was not read.");
+  if ($("dem-motor")) $("dem-motor").textContent = text;
+  if ($("wiz-motor")) $("wiz-motor").textContent = text;
+}
+
+async function refreshMotorState() {
+  try {
+    const result = await act({ type: "motorState", op: "read", node: Number($("node-id").value) || 1 });
+    paintMotorState(result);
+  } catch (err) {
+    paintMotorState({ ok: false, error: err.message });
+  }
+}
+
+async function requestMotorState(op) {
+  try {
+    const result = await act({ type: "motorState", op, node: Number($("node-id").value) || 1 });
+    paintMotorState(result);
+  } catch (err) {
+    paintMotorState({ ok: false, error: err.message });
+  }
+}
+
 function showWizard(step) {
   wiz.step = step;
   for (let i = 1; i <= 5; i++) {
@@ -499,6 +525,7 @@ function showWizard(step) {
   $("wiz-back").hidden = step === 1;
   $("wiz-next").textContent = step === 5 ? "Close" : "Next";
   if (step === 1 && ui.latest && ui.latest.helperMode === "online") fillNameplateForm(ui.latest);
+  if (step === 3) refreshMotorState();
   if (step === 4 && wiz.noControlword) {
     $("wiz-dir-result").textContent = "The slow spin left the shaft stopped, so the direction check cannot turn it. Press Next.";
   }
@@ -710,6 +737,7 @@ function openDialog(id) {
   if (!dlg.open) dlg.showModal();
   if (id === "dlg-phases") startPhase();
   if (id === "dlg-setup") showWizard(1);
+  if (id === "dlg-402") refreshMotorState();
   if (id === "dlg-about") paintAbout(ui.latest && ui.latest.version);
   liftPad();
 }
@@ -922,7 +950,7 @@ const HELP = [
   ["Commands", "The command window takes the same kind of lines as the old console: read 0x1008 0, write 0x60FF 0 1500, nmt start, demand enable, dcf open <path>, trace arm. Type help there for the full list."],
   ["DCF files", "Open a .dcf or .eds from Offline DCF. Names, values, comments, and unknown keys are kept. Compare two files and ignore read-only objects when you only care about settings. Save writes the file back if it was opened from a path, and also downloads a copy."],
   ["CANopen", "SDO upload and download, NMT, heartbeat, EMCY, SYNC, and one RPDO/TPDO pair are implemented, including segmented strings. PDO mapping uses the 0x1600 and 0x1A00 objects."],
-  ["CiA 402", "The slow spin sets profile velocity first, mode 3 in object 0x6060. It then sends Shutdown 0x0006, Switch on 0x0007, and Enable operation 0x000F on the controlword 0x6040. A target speed is sent only when the statusword 0x6041 says Operation enabled. Profile velocity is the bench mode because each command is one SDO, not a setpoint on every cycle. Fault reset sends 0x0080 and then Shutdown."],
+  ["CiA 402", "The slow spin sets Pre-operational, writes profile velocity to object 0x6060, or to object 0x2900 when 0x6060 is missing, then returns to Operational. It then sends Shutdown 0x0006, Switch on 0x0007, and Enable operation 0x000F on the controlword 0x6040. A target speed is sent only when the statusword 0x6041 says Operation enabled. Pre-operational and Operational write object 0x2800 when the controller has it, and send NMT as well. Profile velocity is the bench mode because each command is one SDO, not a setpoint on every cycle. Fault reset sends 0x0080 and then Shutdown."],
   ["E-stop and speed keys", "The red E-STOP button sets the target speed to 0 and sends a quick stop. Space does the same, except while you are typing in a text box. Arrow up adds 100 rpm. Arrow down subtracts 100 rpm. The first arrow also enables profile velocity if the drive is not already running. The command line keeps its own arrow keys for history."],
   ["J1939", "The demand window sends TSC1, PGN 0. Requested speed is 0.125 rpm per bit. Requested torque is 1 percent per bit with an offset of -125 percent. The tool address defaults to 250 (0xFA)."],
   ["Updates", "Help, Check for updates, looks at the public project on GitHub. When a newer setup program is published, a bar at the bottom downloads it. This window closes, Windows asks for permission, and the setup program replaces this copy and opens it again."],
@@ -930,6 +958,11 @@ const HELP = [
 ];
 
 const CHANGELOG = [
+  { version: "2026.9.9", notes: [
+    "Pre-operational and Operational change the motor state. Object 0x2800 is written when the controller has it, and NMT is sent as well.",
+    "The slow spin enters Pre-operational, writes profile velocity to object 0x6060, or to object 0x2900 when 0x6060 is missing, then returns to Operational.",
+    "A controller with no object 0x6040 still leaves the shaft stopped.",
+  ]},
   { version: "2026.9.8", notes: [
     "About shows this changelog.",
   ]},
@@ -1248,6 +1281,7 @@ function bind() {
   });
   $("j-hold").addEventListener("change", () => sendJ1939($("j-hold").checked));
   document.querySelectorAll("[data-dem]").forEach((btn) => btn.addEventListener("click", () => act({ type: "cia402", op: btn.dataset.dem })));
+  document.querySelectorAll("[data-motor]").forEach((btn) => btn.addEventListener("click", () => requestMotorState(btn.dataset.motor)));
   $("dem-mode").addEventListener("change", () => act({ type: "cia402", op: "mode", value: $("dem-mode").value }));
   $("dem-vel-go").addEventListener("click", () => act({ type: "cia402", op: "vel", value: $("dem-vel").value }));
   $("dem-tq-go").addEventListener("click", () => act({ type: "cia402", op: "torque", value: $("dem-tq").value }));
@@ -1307,9 +1341,14 @@ function bind() {
       if (blocked) wiz.noControlword = true;
       let spinLine = "";
       if (blocked && probe.missing.includes("0x6040")) {
-        spinLine = " Object 0x6040 is not in this controller, so there is no CiA 402 controlword. SDO abort 0x06020000 means that object is not in the dictionary. The slow spin leaves the shaft stopped.";
+        spinLine = " Object 0x6040 is not in this controller, so there is no CiA 402 controlword. SDO abort 0x06020000 means that object is not in the dictionary. Use Pre-operational and Operational on the next step to change the motor state. The slow spin leaves the shaft stopped.";
       } else if (blocked) {
         spinLine = " Object " + probe.missing.join(" and ") + " is not in this controller. The slow spin leaves the shaft stopped.";
+      }
+      if (probe && probe.missing && probe.missing.includes("0x6060") && !probe.missing.includes("0x2900")) {
+        spinLine += " Object 0x6060 is not in this controller. The slow spin writes profile velocity to object 0x2900.";
+      } else if (probe && probe.missing && probe.missing.includes("0x6060")) {
+        spinLine += " Object 0x6060 is not in this controller.";
       }
       if (stored.keptLocal) {
         const cia = stored.cia && stored.cia.length ? " Stored " + stored.cia.join(", ") + "." : "";

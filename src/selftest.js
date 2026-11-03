@@ -107,6 +107,33 @@ async function main() {
   assert(commissioned.state === "Operation enabled", "profile velocity commission, got " + commissioned.state);
   assert((engine.node.statusword() & 0x6f) === 0x27, "statusword is operation enabled");
 
+  const modeObj = engine.node.get(0x6060, 0);
+  const modeDisp = engine.node.get(0x6061, 0);
+  const cwObj = engine.node.get(0x6040, 0);
+  const putObj = (obj) => engine.node.objects.set(engine.node.key(obj.index, obj.sub), obj);
+  engine.node.objects.delete(engine.node.key(0x6060, 0));
+  engine.node.objects.delete(engine.node.key(0x6061, 0));
+  engine.node.add(0x2900, 0, "Motor mode", dcf.DT.INTEGER8, "rw", 4);
+  const modeMissing = await engine.probeDrive(1);
+  assert(modeMissing.missing.includes("0x6060") && modeMissing.canSpin === true, "missing 0x6060 still has a controlword, got " + JSON.stringify(modeMissing));
+  const fallback = await engine.commissionVelocity();
+  assert(fallback.state === "Operation enabled", "mode falls back to 0x2900, got " + fallback.state);
+  assert(engine.node.get(0x2900, 0).value === 3, "0x2900 profile velocity, got " + engine.node.get(0x2900, 0).value);
+  engine.node.objects.delete(engine.node.key(0x2900, 0));
+  putObj(modeObj);
+  putObj(modeDisp);
+  const pre = await engine.setMotorState("preop");
+  assert(engine.node.nmt === 127 && pre.state === "Pre-operational" && pre.via === "NMT", "pre-operational uses NMT, got " + JSON.stringify(pre) + " nmt " + engine.node.nmt);
+  const runState = await engine.setMotorState("operational");
+  assert(engine.node.nmt === 5 && runState.state === "Operational", "operational uses NMT, got " + JSON.stringify(runState) + " nmt " + engine.node.nmt);
+  engine.node.objects.delete(engine.node.key(0x6060, 0));
+  engine.node.objects.delete(engine.node.key(0x6040, 0));
+  let both = "";
+  try { await engine.commissionVelocity(); } catch (err) { both = err.message; }
+  assert(/0x6040/.test(both) && /0x6060/.test(both) && /leaves the shaft stopped/.test(both) && /Operational/.test(both), "missing mode and controlword, got " + both);
+  putObj(modeObj);
+  putObj(cwObj);
+
   engine.transmit({
     id: 0x0c0021fa,
     ext: true,
