@@ -35,6 +35,7 @@ CloseApplications=yes
 RestartApplications=no
 MinVersion=10.0
 ChangesAssociations=no
+InfoAfterFile=steps.txt
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
@@ -44,13 +45,17 @@ Name: "desktopicon"; Description: "Add a desktop shortcut"; GroupDescription: "S
 
 [Files]
 Source: "..\build\staging\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "steps.txt"; DestDir: "{app}"; DestName: "How to use.txt"; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\Z-DVT Workbench"; Filename: "{app}\Z-DVT Workbench.exe"; Comment: "Crafted by Z-Jomant Meister"
+Name: "{group}\How to use Z-DVT Workbench"; Filename: "{sys}\notepad.exe"; Parameters: """{app}\How to use.txt"""; Comment: "Step by step"
 Name: "{autodesktop}\Z-DVT Workbench"; Filename: "{app}\Z-DVT Workbench.exe"; Comment: "Crafted by Z-Jomant Meister"; Tasks: desktopicon
 
 [Run]
 Filename: "{app}\Z-DVT Workbench.exe"; Description: "Open Z-DVT Workbench"; Flags: nowait postinstall skipifsilent
 
 [Messages]
-WelcomeLabel2=This installs Z-DVT Workbench on your computer.%n%nThe workbench watches CAN, talks CANopen, and runs an inverter setup on the bench. It is crafted by Z-Jomant Meister. It is not a BorgWarner or Sevcon product.%n%nA newer version can install over this one. The program checks GitHub for that update.
+WelcomeLabel2=This installs Z-DVT Workbench on your computer.%n%nThe workbench watches CAN, talks CANopen, and runs an inverter setup on the bench. It is crafted by Z-Jomant Meister. It is not a BorgWarner or Sevcon product.%n%nA newer version can install over this one. The program checks GitHub for that update. Step by step instructions are shown when setup finishes.
+InfoAfterClickLabel=These are the steps for the bench. Click Next when you are ready to finish.
+InfoAfterLabel=
