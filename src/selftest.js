@@ -252,6 +252,114 @@ async function main() {
   assert(engine.node.get(0x6075, 0).value === 12500, "rated current in mA");
   assert(engine.node.get(0x6080, 0).value === 3000, "max motor speed");
 
+  const realOnSdo = engine.node.onSdo.bind(engine.node);
+  const segReqs = [];
+  engine.node.onSdo = function (data) {
+    const cmd = data[0];
+    const ccs = cmd >> 5;
+    const index = data[1] | (data[2] << 8);
+    if (cmd === 0x80) {
+      this.up = null;
+      return;
+    }
+    if (ccs === 2 && index === 0x1008) {
+      if (this.up && this.up.open) return this.abort(0x1008, 0, 0x05030000);
+      this.up = { toggle: 0, open: true };
+      this.reply(0x580 + this.id, [0x41, 0x08, 0x10, 0, 7, 0, 0, 0]);
+      return;
+    }
+    if (ccs === 3) {
+      segReqs.push(cmd);
+      if (!this.up || !this.up.open) return this.abort(0x1008, 0, 0x05040001);
+      const toggle = (cmd >> 4) & 1;
+      if (toggle !== this.up.toggle) return this.abort(0x1008, 0, 0x05030000);
+      if (this.up.toggle === 0) {
+        this.up.toggle = 1;
+        this.reply(0x580 + this.id, [0x00, 0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47]);
+        return;
+      }
+      this.up = null;
+      this.reply(0x580 + this.id, [0x1f, 0, 0, 0, 0, 0, 0, 0]);
+      return;
+    }
+    return realOnSdo(data);
+  };
+  const held = await engine.readObject(1, 0x1008, 0);
+  assert(held.value === "ABCDEFG", "segmented name waits for the last bit, got " + held.value);
+  assert(segReqs[0] === 0x60 && segReqs[1] === 0x70, "client requests both toggles, got " + segReqs.join(","));
+  assert(!engine.node.up, "server transfer closed after the last segment");
+  const heldAgain = await engine.readObject(1, 0x1008, 0);
+  assert(heldAgain.value === "ABCDEFG" && segReqs.length === 4, "second device-name read starts clean");
+
+  engine.node.onSdo = function (data) {
+    const cmd = data[0];
+    const ccs = cmd >> 5;
+    if (cmd === 0x80) return;
+    if (ccs === 2) {
+      this.reply(0x580 + this.id, [0x41, 0x08, 0x10, 0, 4, 0, 0, 0]);
+      return;
+    }
+    if (ccs === 3) {
+      const toggle = (cmd >> 4) & 1;
+      if (toggle !== 1) {
+        this.reply(0x580 + this.id, [0x80, 0x08, 0x10, 0, 0x00, 0x00, 0x03, 0x05]);
+        return;
+      }
+      this.reply(0x580 + this.id, [0x17, 0x54, 0x65, 0x73, 0x74, 0, 0, 0]);
+    }
+  };
+  const recovered = await engine.readObject(1, 0x1008, 0);
+  assert(recovered.value === "Test", "toggle mismatch retries with the other bit, got " + recovered.value);
+
+  let toggleHits = 0;
+  engine.node.onSdo = function (data) {
+    if (data[0] === 0x80) return;
+    toggleHits += 1;
+    this.reply(0x580 + this.id, [0x80, 0x08, 0x10, 0, 0x00, 0x00, 0x03, 0x05]);
+  };
+  let toggleMsg = "";
+  try { await engine.readObject(1, 0x1008, 0); } catch (err) { toggleMsg = err.message; }
+  assert(/0x05030000/.test(toggleMsg) && /toggle bit/i.test(toggleMsg), "toggle abort stays visible, got " + toggleMsg);
+  assert(toggleHits === 3, "toggle retry stops, got " + toggleHits);
+  engine.node.onSdo = realOnSdo;
+  engine.node.up = null;
+
+  const present = await engine.probeDrive(1);
+  assert(present.canSpin === true, "practice controller can spin, got " + JSON.stringify(present));
+  engine.node.objects.delete(engine.node.key(0x6040, 0));
+  const absent = await engine.probeDrive(1);
+  assert(absent.known && absent.missing.includes("0x6040") && absent.canSpin === false, "missing controlword is reported, got " + JSON.stringify(absent));
+  let blocked = "";
+  try { await engine.demand("enable"); } catch (err) { blocked = err.message; }
+  assert(/0x6040 is not in this controller/.test(blocked) && /leaves the shaft stopped/.test(blocked), "enable explains the missing controlword, got " + blocked);
+  assert(engine.commandRpm === 0 && engine.motionReady === false, "enable leaves the shaft stopped");
+  const safeStop = await engine.estop();
+  assert(safeStop.ok === true && safeStop.rpm === 0 && safeStop.controlword === false, "estop still zeros speed, got " + JSON.stringify(safeStop));
+
+  let writes = 0;
+  engine.adapter = "ixxat";
+  engine.hw = {
+    write(frame) {
+      const data = frame.data || [];
+      if (data[0] === 0x80) return;
+      writes += 1;
+      engine.receive({
+        id: 0x581,
+        ext: false,
+        data: [0x80, data[1], data[2], data[3], 0x00, 0x00, 0x02, 0x06],
+        dlc: 8,
+      });
+    },
+    poll() { return { frames: [], notes: [] }; },
+    close() {},
+  };
+  let wire = "";
+  try { await engine.demand("enable"); } catch (err) { wire = err.message; }
+  assert(/0x6040 is not in this controller/.test(wire), "ixxat abort 0x06020000 is explained, got " + wire);
+  assert(writes === 1, "enable stops after the first missing controlword, got " + writes);
+  engine.adapter = "virtual";
+  engine.hw = null;
+
   if (engine.sdoJob && engine.sdoJob.timer) clearTimeout(engine.sdoJob.timer);
   engine.stop();
   fs.unlinkSync(tmp);
@@ -265,7 +373,8 @@ async function main() {
   fs.writeFileSync(fakeSetup, "@echo off\r\necho ok> \"" + launchMarker + "\"\r\nexit /b 0\r\n");
   updater.launchInstaller(fakeSetup, { relaunch: false });
   let launchCode = null;
-  const launchUntil = Date.now() + 8000;
+  // The helper waits until Z-DVT Workbench.exe exits, up to about 22 seconds.
+  const launchUntil = Date.now() + 28000;
   while (launchCode == null && Date.now() < launchUntil) {
     await new Promise((resolve) => setTimeout(resolve, 200));
     if (fs.existsSync(launchMarker)) launchCode = updater.consumeUpdateResult();

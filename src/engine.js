@@ -355,6 +355,8 @@ class VirtualNode {
   }
 
   abort(index, sub, code) {
+    this.up = null;
+    this.down = null;
     const d = [0x80, index & 0xff, (index >> 8) & 0xff, sub & 0xff, code & 0xff, (code >> 8) & 0xff, (code >> 16) & 0xff, (code >> 24) & 0xff];
     this.reply(0x580 + this.id, d);
   }
@@ -436,6 +438,11 @@ class VirtualNode {
     const ccs = cmd >> 5;
     const index = data[1] | (data[2] << 8);
     const sub = data[3];
+    if (ccs === 4) {
+      this.up = null;
+      this.down = null;
+      return;
+    }
     if (ccs === 2) {
       const obj = this.get(index, sub);
       if (!obj) return this.abort(index, sub, 0x06020000);
@@ -1090,7 +1097,30 @@ class Workbench {
     job.done = true;
     clearTimeout(job.timer);
     this.sdoJob = null;
+    const fromServer = String(message).startsWith("SDO abort ");
+    if (!fromServer && job.segmenting && message !== "SDO toggle") {
+      this.sendSdoAbort(job.node, job.index, job.sub, 0x05040000);
+    }
     job.reject(new Error(message));
+  }
+
+  sendSdoAbort(node, index, sub, code) {
+    const abort = code >>> 0;
+    this.transmit(this.sdoFrame(node, [
+      0x80,
+      index & 0xff,
+      (index >> 8) & 0xff,
+      sub & 0xff,
+      abort & 0xff,
+      (abort >> 8) & 0xff,
+      (abort >> 16) & 0xff,
+      (abort >> 24) & 0xff,
+    ]));
+  }
+
+  requestUploadSegment(job) {
+    job.segmenting = true;
+    this.transmit(this.sdoFrame(job.node, [0x60 | ((job.toggle & 1) << 4), 0, 0, 0, 0, 0, 0, 0]));
   }
 
   sdoWaitMs() {
@@ -1155,8 +1185,9 @@ class Workbench {
         this.finishSdo(Buffer.from(data.slice(4, 4 + len)));
       } else {
         if (cmd & 0x01) job.size = data[4] | (data[5] << 8) | (data[6] << 16) | (data[7] << 24);
-        job.toggle = 0;
-        this.transmit(this.sdoFrame(job.node, [0x60, 0, 0, 0, 0, 0, 0, 0]));
+        job.toggle = job.firstToggle ? 1 : 0;
+        job.segments = 0;
+        this.requestUploadSegment(job);
       }
       return;
     }
@@ -1164,15 +1195,21 @@ class Workbench {
       const toggle = (cmd >> 4) & 1;
       if (toggle !== job.toggle) return this.failSdo("SDO toggle");
       const n = (cmd >> 1) & 7;
-      const last = cmd & 1;
+      const last = (cmd & 1) !== 0;
       const len = 7 - n;
-      job.buf = Buffer.concat([job.buf, Buffer.from(data.slice(1, 1 + len))]);
-      if (last || (job.size != null && job.buf.length >= job.size)) {
+      if (len > 0) job.buf = Buffer.concat([job.buf, Buffer.from(data.slice(1, 1 + len))]);
+      job.segments = (job.segments || 0) + 1;
+      const cap = job.size != null ? Math.max(2, Math.ceil(job.size / 7) + 2) : 64;
+      if (!last && job.segments >= cap) {
+        const where = "0x" + dcf.padHex(job.index, 4) + ":" + job.sub;
+        return this.failSdo("Segmented read of " + where + " did not end. The controller kept the SDO toggle open.");
+      }
+      if (last) {
         const out = job.size != null ? job.buf.subarray(0, job.size) : job.buf;
-        this.finishSdo(out);
+        this.finishSdo(Buffer.from(out));
       } else {
         job.toggle ^= 1;
-        this.transmit(this.sdoFrame(job.node, [0x60 | (job.toggle << 4), 0, 0, 0, 0, 0, 0, 0]));
+        this.requestUploadSegment(job);
       }
       return;
     }
@@ -1211,31 +1248,40 @@ class Workbench {
     return { id: 0x600 + node, ext: false, data: bytes, dlc: 8 };
   }
 
-  async readRawOnce(node, index, sub) {
+  async readRawOnce(node, index, sub, firstToggle) {
     const { job, promise } = this.beginSdo(node, index, sub);
     job.op = "read";
+    job.firstToggle = firstToggle ? 1 : 0;
     this.transmit(this.sdoFrame(node, [0x40, index & 0xff, (index >> 8) & 0xff, sub & 0xff, 0, 0, 0, 0]));
     return promise;
   }
 
   async readRaw(node, index, sub) {
     if (!this.busOn) throw new Error("CAN is stopped");
-    const attempts = this.adapter === "ixxat" ? 2 : 1;
-    let caught = null;
-    for (let attempt = 0; attempt < attempts; attempt++) {
+    const timeoutAttempts = this.adapter === "ixxat" ? 2 : 1;
+    let timeoutTry = 0;
+    let toggleTry = 0;
+    for (;;) {
+      const firstToggle = toggleTry >= 2 ? 1 : 0;
       try {
-        return await this.readRawOnce(node, index, sub);
+        return await this.readRawOnce(node, index, sub, firstToggle);
       } catch (err) {
-        caught = err;
-        if (!/SDO timeout/.test(String(err.message))) throw err;
+        const msg = String(err && err.message || err);
+        if ((/0x05030000/.test(msg) || msg === "SDO toggle") && toggleTry < 2) {
+          toggleTry += 1;
+          this.sendSdoAbort(node, index, sub, 0x05030000);
+          continue;
+        }
+        if (/0x05030000/.test(msg) || msg === "SDO toggle") this.sendSdoAbort(node, index, sub, 0x05030000);
+        if (!/SDO timeout/.test(msg)) throw err;
         const why = this.explainSdoMiss(node);
         const lost = this.sdoRxCount > 0 || this.sdoExtCount > 0;
-        if (attempt === attempts - 1 || !lost || /Heartbeat is coming|29-bit frames|No CAN frame/.test(why)) {
+        timeoutTry += 1;
+        if (timeoutTry >= timeoutAttempts || !lost || /Heartbeat is coming|29-bit frames|No CAN frame/.test(why)) {
           throw new Error(why);
         }
       }
     }
-    throw caught || new Error(this.explainSdoMiss(node));
   }
 
   async writeRaw(node, index, sub, payload, force) {
@@ -1284,14 +1330,35 @@ class Workbench {
     return { index, sub, name: "Object", type: dcf.DT.VISIBLE_STRING, access: "rw", value: String(rawValue) };
   }
 
+  objectMissing(err) {
+    return /06020000|06090011|not in the demo dictionary|not in this controller/.test(String(err && err.message || err));
+  }
+
+  cia402Gap(index) {
+    if (index === 0x6040) return "Object 0x6040 is not in this controller, so there is no CiA 402 controlword. SDO abort 0x06020000 means that object is not in the dictionary. The slow spin leaves the shaft stopped.";
+    if (index === 0x6060) return "Object 0x6060 is not in this controller, so there is no CiA 402 mode. The slow spin leaves the shaft stopped.";
+    if (index === 0x60ff) return "Object 0x60FF is not in this controller, so there is no CiA 402 target speed. The slow spin leaves the shaft stopped.";
+    return "Object 0x" + dcf.padHex(index, 4) + " is not in this controller. The shaft stays stopped.";
+  }
+
+  async writeDrive(node, index, sub, value, force) {
+    try {
+      await this.writeObject(node, index, sub, value, force);
+    } catch (err) {
+      if (!this.objectMissing(err)) throw err;
+      const error = new Error(this.cia402Gap(index));
+      error.missing = index;
+      throw error;
+    }
+  }
+
   async tryNameplateWrite(node, index, sub, value) {
     try {
       await this.writeObject(node, index, sub, value);
       return "stored";
     } catch (err) {
-      const text = String(err && err.message || err);
-      if (/06020000|06090011|not in the demo dictionary|not in this controller/.test(text)) return "missing";
-      return text;
+      if (this.objectMissing(err)) return "missing";
+      return String(err && err.message || err);
     }
   }
 
@@ -1329,6 +1396,26 @@ class Workbench {
       this.info("Object 0x2000 is not in this controller. SDO abort 0x06020000 means that object is not in the dictionary. The nameplate stays on the setup sheet." + extra, "help");
     }
     return { ok: true, keptLocal, cia: ciaWrote };
+  }
+
+  async probeDrive(nodeId) {
+    const node = nodeId || this.selectedNode;
+    const missing = [];
+    for (const index of [0x6040, 0x6060, 0x60ff]) {
+      try {
+        await this.readRaw(node, index, 0);
+      } catch (err) {
+        const text = String(err && err.message || err);
+        if (/06010001|write-only/.test(text)) continue;
+        if (this.objectMissing(err)) {
+          missing.push("0x" + dcf.padHex(index, 4));
+          continue;
+        }
+        return { ok: true, known: false, missing, canSpin: false, error: text };
+      }
+    }
+    const canSpin = !missing.includes("0x6040") && !missing.includes("0x6060") && !missing.includes("0x60FF");
+    return { ok: true, known: true, missing, canSpin };
   }
 
   async writeObject(node, index, sub, rawValue, force) {
@@ -1730,40 +1817,46 @@ class Workbench {
   async demand(op, raw, force) {
     const node = this.selectedNode;
     if (op === "enable") {
-      await this.writeObject(node, 0x6040, 0, 0x0006, force);
-      await this.writeObject(node, 0x6040, 0, 0x0007, force);
-      await this.writeObject(node, 0x6040, 0, 0x000f, force);
+      try {
+        await this.writeDrive(node, 0x6040, 0, 0x0006, force);
+        await this.writeDrive(node, 0x6040, 0, 0x0007, force);
+        await this.writeDrive(node, 0x6040, 0, 0x000f, force);
+      } catch (err) {
+        this.commandRpm = 0;
+        this.motionReady = false;
+        throw err;
+      }
       if (this.node.nmt !== 5) this.nmt("start", node);
       this.motionReady = true;
       this.info("Drive enable sequence sent", "help");
       return;
     }
     if (op === "disable") {
-      await this.writeObject(node, 0x6040, 0, 0x0000, force);
+      await this.writeDrive(node, 0x6040, 0, 0x0000, force);
       this.motionReady = false;
       this.info("Disable voltage sent", "info");
       return;
     }
-    if (op === "shutdown") return this.writeObject(node, 0x6040, 0, 0x0006, force);
-    if (op === "switchon") return this.writeObject(node, 0x6040, 0, 0x0007, force);
-    if (op === "quickstop") return this.writeObject(node, 0x6040, 0, 0x0002, force);
-    if (op === "faultreset") return this.writeObject(node, 0x6040, 0, 0x0080, force);
+    if (op === "shutdown") return this.writeDrive(node, 0x6040, 0, 0x0006, force);
+    if (op === "switchon") return this.writeDrive(node, 0x6040, 0, 0x0007, force);
+    if (op === "quickstop") return this.writeDrive(node, 0x6040, 0, 0x0002, force);
+    if (op === "faultreset") return this.writeDrive(node, 0x6040, 0, 0x0080, force);
     if (op === "mode") {
       const modes = { pp: 1, pv: 3, tq: 4, velocity: 3, torque: 4, position: 1 };
       const mode = modes[String(raw).toLowerCase()] || parseUserNumber(raw);
-      await this.writeObject(node, 0x6060, 0, mode, force);
+      await this.writeDrive(node, 0x6060, 0, mode, force);
       this.info("Mode set to " + mode, "info");
       return;
     }
     if (op === "vel" || op === "velocity") {
       const rpm = parseUserNumber(raw);
+      await this.writeDrive(node, 0x60ff, 0, rpm, force);
       this.commandRpm = rpm;
-      await this.writeObject(node, 0x60ff, 0, rpm, force);
       this.info("Target velocity " + raw + " rpm", "info");
       return;
     }
     if (op === "torque" || op === "tq") {
-      await this.writeObject(node, 0x6071, 0, Math.round(Number(raw) * 10), force);
+      await this.writeDrive(node, 0x6071, 0, Math.round(Number(raw) * 10), force);
       this.info("Target torque " + raw + " %", "info");
       return;
     }
@@ -1775,29 +1868,49 @@ class Workbench {
     this.commandRpm = 0;
     this.motionReady = false;
     const node = this.selectedNode;
-    try {
-      await this.writeObject(node, 0x60ff, 0, 0, true);
-      await this.writeObject(node, 0x6071, 0, 0, true);
-      await this.writeObject(node, 0x6040, 0, 0x0002, true);
-      this.info("E-stop. Target speed is 0. Quick stop sent to node " + node + ".", "error");
-      return { ok: true, rpm: 0 };
-    } catch (err) {
-      this.info("E-stop failed: " + err.message, "error");
-      return { ok: false, error: err.message, rpm: 0 };
+    const tryZero = async (index, sub, value) => {
+      try {
+        await this.writeObject(node, index, sub, value, true);
+        return "sent";
+      } catch (err) {
+        if (this.objectMissing(err)) return "missing";
+        return err.message || String(err);
+      }
+    };
+    const speed = await tryZero(0x60ff, 0, 0);
+    const torque = await tryZero(0x6071, 0, 0);
+    const stop = await tryZero(0x6040, 0, 0x0002);
+    if (stop === "missing") {
+      this.info("E-stop. Target speed is 0. Object 0x6040 is not in this controller, so quick stop was not sent.", "error");
+      return { ok: true, rpm: 0, controlword: false };
     }
+    if (stop !== "sent" && speed !== "sent" && torque !== "sent") {
+      const why = stop !== "sent" ? stop : speed;
+      this.info("E-stop. Target speed is 0. " + why, "error");
+      return { ok: false, error: why, rpm: 0 };
+    }
+    this.info("E-stop. Target speed is 0. Quick stop sent to node " + node + ".", "error");
+    return { ok: true, rpm: 0 };
   }
 
   async nudgeSpeed(dir) {
     const maxV = Math.abs(Number(this.node.get(0x2001, 2).value) || 6000);
     const sign = dir < 0 ? -1 : 1;
     const next = clamp((this.commandRpm || 0) + sign * 100, -maxV, maxV);
-    if (!this.driveIsEnabled() && !this.motionReady) {
-      await this.demand("mode", "pv", true);
-      await this.demand("enable", null, true);
+    try {
+      if (!this.driveIsEnabled() && !this.motionReady) {
+        await this.demand("mode", "pv", true);
+        await this.demand("enable", null, true);
+      }
+      await this.writeDrive(this.selectedNode, 0x60ff, 0, next, true);
+      this.commandRpm = next;
+      return { ok: true, rpm: next };
+    } catch (err) {
+      this.commandRpm = 0;
+      this.motionReady = false;
+      this.info(err.message, "error");
+      return { ok: false, error: err.message, rpm: 0 };
     }
-    this.commandRpm = next;
-    await this.writeObject(this.selectedNode, 0x60ff, 0, next, true);
-    return { ok: true, rpm: next };
   }
 
   publicObject(obj) {
@@ -2074,6 +2187,7 @@ class Workbench {
       }
     }
     if (type === "nameplate") return this.storeNameplate(msg);
+    if (type === "probe402") return this.probeDrive(msg.node);
     if (type === "estop") return this.estop();
     if (type === "nudge") return this.nudgeSpeed(msg.dir);
     if (type === "cia402") {

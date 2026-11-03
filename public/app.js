@@ -485,7 +485,7 @@ function nameplateFrom(s) {
   };
 }
 
-const wiz = { step: 1, found: false, spinTried: false, spinOk: false, spinHardware: false, dirReady: false, direction: "" };
+const wiz = { step: 1, found: false, spinTried: false, spinOk: false, spinHardware: false, noControlword: false, dirReady: false, direction: "" };
 
 function showWizard(step) {
   wiz.step = step;
@@ -498,6 +498,9 @@ function showWizard(step) {
   $("wiz-back").hidden = step === 1;
   $("wiz-next").textContent = step === 5 ? "Close" : "Next";
   if (step === 1 && ui.latest && ui.latest.helperMode === "online") fillNameplateForm(ui.latest);
+  if (step === 4 && wiz.noControlword) {
+    $("wiz-dir-result").textContent = "The slow spin left the shaft stopped, so the direction check cannot turn it. Press Next.";
+  }
   if (step === 5) fillWizardSummary();
 }
 
@@ -581,6 +584,8 @@ async function runGuardedSpin() {
   } catch (err) {
     wiz.spinTried = true;
     wiz.spinOk = false;
+    if (/leaves the shaft stopped/.test(err.message)) wiz.noControlword = true;
+    try { await act({ type: "estop" }); } catch { /* target speed is already 0 */ }
     $("wiz-spin-result").textContent = err.message;
   }
 }
@@ -607,6 +612,8 @@ async function runDirection() {
     wiz.dirReady = true;
     $("wiz-dir-result").textContent = `It was turning at about ${Math.abs(rpm).toFixed(0)} rpm. Did it turn the way the vehicle needs?`;
   } catch (err) {
+    if (/leaves the shaft stopped/.test(err.message)) wiz.noControlword = true;
+    try { await act({ type: "estop" }); } catch { /* target speed is already 0 */ }
     $("wiz-dir-result").textContent = err.message;
   }
 }
@@ -637,7 +644,9 @@ function fillWizardSummary() {
     : wiz.direction === "correct"
       ? "Phase order is correct."
       : "Direction was not confirmed.";
-  const spin = wiz.spinHardware
+  const spin = wiz.noControlword
+    ? "Slow spin left the shaft stopped. This controller has no CiA 402 controlword."
+    : wiz.spinHardware
     ? "Slow spin was sent on the IXXAT adapter. Confirm the shaft on the bench."
     : !wiz.spinTried ? "Slow spin was not run." : wiz.spinOk ? "Slow spin moved the shaft." : "Slow spin did not move the shaft.";
   $("wiz-summary").textContent = `${plate.name}\n${plate.poles} pole pairs, ${plate.amps} A, ${plate.volts} V DC, ${plate.rpm} rpm, encoder ${plate.ppr}.\n${spin}\n${direction}`;
@@ -656,7 +665,7 @@ async function saveWizard() {
     "Rated DC voltage V: " + plate.volts,
     "Top speed rpm: " + plate.rpm,
     "Encoder pulses per turn: " + plate.ppr,
-    "Slow spin: " + (wiz.spinHardware ? "sent on the IXXAT adapter" : wiz.spinOk ? "shaft moved" : "shaft did not move or was not tested"),
+    "Slow spin: " + (wiz.noControlword ? "left stopped, no CiA 402 controlword" : wiz.spinHardware ? "sent on the IXXAT adapter" : wiz.spinOk ? "shaft moved" : "shaft did not move or was not tested"),
     "Direction: " + direction,
     "Controller: " + (Number($("node-id").value) || 1),
   ].join("\r\n");
@@ -684,7 +693,7 @@ function wizardNext() {
     $("wiz-spin-result").textContent = "Run the slow test before leaving this step.";
     return;
   }
-  if (wiz.step === 4 && !wiz.direction) {
+  if (wiz.step === 4 && !wiz.direction && !wiz.noControlword) {
     $("wiz-dir-result").textContent = "Answer the direction question before leaving this step.";
     return;
   }
@@ -1243,14 +1252,23 @@ function bind() {
       const ping = await act({ type: "ping", node });
       if (!ping.ok) throw new Error(ping.error || "The controller did not answer.");
       const stored = await applyNameplate();
+      const probe = await act({ type: "probe402" });
       wiz.found = true;
       const heard = ping.node || node;
       const named = ping.name ? " as " + ping.name : "";
+      const blocked = probe && probe.known && probe.canSpin === false;
+      if (blocked) wiz.noControlword = true;
+      let spinLine = "";
+      if (blocked && probe.missing.includes("0x6040")) {
+        spinLine = " Object 0x6040 is not in this controller, so there is no CiA 402 controlword. SDO abort 0x06020000 means that object is not in the dictionary. The slow spin leaves the shaft stopped.";
+      } else if (blocked) {
+        spinLine = " Object " + probe.missing.join(" and ") + " is not in this controller. The slow spin leaves the shaft stopped.";
+      }
       if (stored.keptLocal) {
         const cia = stored.cia && stored.cia.length ? " Stored " + stored.cia.join(", ") + "." : "";
-        $("wiz-find-result").textContent = `Controller ${heard} answered${named}. Object 0x2000 is not in this controller. SDO abort 0x06020000 means that object is not in the dictionary. Pole pairs, encoder, and the motor name stay on the setup sheet.${cia} You can run the slow spin.`;
+        $("wiz-find-result").textContent = `Controller ${heard} answered${named}. Object 0x2000 is not in this controller. SDO abort 0x06020000 means that object is not in the dictionary. Pole pairs, encoder, and the motor name stay on the setup sheet.${cia}${spinLine}`;
       } else {
-        $("wiz-find-result").textContent = `Controller ${heard} answered${named}. The nameplate is stored.`;
+        $("wiz-find-result").textContent = `Controller ${heard} answered${named}. The nameplate is stored.${spinLine}`;
       }
     } catch (err) {
       wiz.found = false;
