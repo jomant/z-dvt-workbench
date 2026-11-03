@@ -929,9 +929,55 @@ const HELP = [
   ["Not included", "This is not a BorgWarner or Sevcon product. It does not program vendor firmware, does not implement a vendor security unlock, and does not ship the vendor object database. A DCF you already have still opens, because those names are stored in the file."],
 ];
 
+const CHANGELOG = [
+  { version: "2026.9.8", notes: [
+    "About shows this changelog.",
+  ]},
+  { version: "2026.9.7", notes: [
+    "The slow spin sets profile velocity, mode 3 in object 0x6060, before Shutdown, Switch on, and Enable operation.",
+    "A target speed is sent only when the statusword says Operation enabled.",
+    "Fault reset sends 0x0080 and then Shutdown.",
+  ]},
+  { version: "2026.9.6", notes: [
+    "A controller-name read that is still in progress is cancelled, then the name is read again.",
+    "Find and the slow spin continue when the controller answers and the name stays unread.",
+  ]},
+  { version: "2026.9.5", notes: [
+    "The controller name is read through the last SDO segment.",
+    "A name read whose toggle bit did not match is cancelled and tried again.",
+    "When object 0x6040 is missing, the slow spin leaves the shaft stopped.",
+  ]},
+  { version: "2026.9.4", notes: [
+    "Find keeps the motor name, pole pairs, and encoder on the setup sheet when object 0x2000 is missing.",
+    "Rated current and top speed are written to 0x6075 and 0x6080 when the controller has those objects.",
+    "An SDO abort names the object. Code 0x06020000 means that object is not in this controller.",
+  ]},
+  { version: "2026.9.3", notes: [
+    "Download and install starts the setup program after this window closes, then opens the new version.",
+  ]},
+  { version: "2026.9.2", notes: [
+    "The red E-STOP button and the Space bar set the target speed to 0 and send a quick stop.",
+    "Arrow up and Arrow down change the shaft command by 100 rpm.",
+    "About shows the version that is running.",
+  ]},
+  { version: "2026.9.1", notes: [
+    "Find names the node that is sending a heartbeat when an SDO read times out, and uses that node when it is the only heartbeat.",
+    "The setup program shows the bench steps when it finishes.",
+  ]},
+  { version: "2026.9.0", notes: [
+    "First release. The Windows setup includes the workbench and Check for updates.",
+    "A practice controller, IXXAT CAN, saved DCF files, the setup wizard, and the phase picture are included.",
+  ]},
+];
+
 function paintAbout(version) {
   const shown = version || (ui.latest && ui.latest.version) || "";
-  $("about-body").innerHTML = `<p><b>Z-DVT Workbench ${esc(shown)}</b></p><p><b>Crafted by Z-Jomant Meister</b></p><p>Z-DVT Workbench replaces the customer configuration workflow. DVT Customer 2025.05b on this PC reports that its VCI4 Tcl 9 DLL will not load, and that release is no longer updated.</p><p>Practice controller 1 speaks CANopen and a small J1939 speed and torque demand. Connect IXXAT on the CAN menu talks to a USB-CAN dongle through the VCI library instead. Saved DCF settings files can be edited and compared offline.</p><p>Not affiliated with BorgWarner or Sevcon.</p>`;
+  const log = CHANGELOG.map((entry) => {
+    const mark = shown && entry.version === shown ? "<span>This copy</span>" : "";
+    const items = entry.notes.map((line) => `<li>${esc(line)}</li>`).join("");
+    return `<section><h3>${esc(entry.version)}${mark}</h3><ul>${items}</ul></section>`;
+  }).join("");
+  $("about-body").innerHTML = `<p><b>Z-DVT Workbench ${esc(shown)}</b></p><p><b>Crafted by Z-Jomant Meister</b></p><p>Z-DVT Workbench replaces the customer configuration workflow. DVT Customer 2025.05b on this PC reports that its VCI4 Tcl 9 DLL will not load, and that release is no longer updated.</p><p>Practice controller 1 speaks CANopen and a small J1939 speed and torque demand. Connect IXXAT on the CAN menu talks to a USB-CAN dongle through the VCI library instead. Saved DCF settings files can be edited and compared offline.</p><p>Not affiliated with BorgWarner or Sevcon.</p><h2>Changelog</h2><div class="changelog">${log}</div>`;
 }
 
 function fillHelp() {

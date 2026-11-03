@@ -332,6 +332,13 @@ canvas { width: 100%; height: 280px; background: var(--navy); border: 1px solid 
 #update-bar[hidden] { display: none; }
 #help-body h2 { margin: 12px 0 4px; font-size: 15px; }
 #help-body p { margin: 0 0 8px; line-height: 1.45; color: var(--muted); }
+#about-body h2 { margin: 6px 0 0; font-size: 15px; }
+#about-body p { margin: 0; line-height: 1.45; }
+.changelog { display: flex; flex-direction: column; gap: 8px; }
+.changelog h3 { margin: 0; font-size: 13px; display: flex; gap: 8px; align-items: center; }
+.changelog h3 span { font-weight: 650; font-size: 11px; color: var(--ok); border: 1px solid var(--ok); border-radius: 999px; padding: 1px 7px; }
+.changelog ul { margin: 2px 0 0; padding-left: 18px; }
+.changelog li { margin: 1px 0; line-height: 1.4; color: var(--muted); }
 #fault-list { display: flex; flex-direction: column; gap: 4px; }
 #dlg-phases, #dlg-setup { width: min(920px, calc(100vw - 32px)); }
 .wiz-pips { display: flex; flex-wrap: wrap; gap: 6px; }

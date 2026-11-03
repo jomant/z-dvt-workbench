@@ -427,6 +427,15 @@ async function main() {
   assert(fs.existsSync(launchMarker), "setup launch keeps running after this program closes");
   assert(launchCode === "0", "setup result is success, got " + launchCode);
 
+  const appSource = fs.readFileSync(path.join(__dirname, "..", "public", "app.js"), "utf8");
+  const pkgVersion = require("../package.json").version;
+  const changelogAt = appSource.indexOf("const CHANGELOG = [");
+  assert(changelogAt >= 0, "about changelog exists");
+  const firstVersion = /version: "([^"]+)"/.exec(appSource.slice(changelogAt));
+  assert(firstVersion && firstVersion[1] === pkgVersion, "changelog opens with " + pkgVersion + ", got " + (firstVersion && firstVersion[1]));
+  assert(appSource.includes("<h2>Changelog</h2>"), "about paints a changelog heading");
+  assert((appSource.match(/version: "2026\.9\./g) || []).length >= 9, "changelog lists the published versions");
+
   if (failed) {
     console.error(failed + " failed");
     process.exit(1);
