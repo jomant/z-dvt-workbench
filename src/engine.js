@@ -712,6 +712,13 @@ class Workbench {
     this.remoteNmt = null;
     this.remoteFault = 0;
     this.remoteName = "";
+    this.remoteVelocity = null;
+    this.remoteStatus = null;
+    this.busSeen = new Map();
+    this.busExtAt = 0;
+    this.busHintKey = "";
+    this.sdoRxCount = 0;
+    this.sdoExtCount = 0;
     this.updateOffer = null;
     this.loadSettings();
   }
@@ -780,6 +787,11 @@ class Workbench {
     this.adapterName = "";
     this.remoteNmt = null;
     this.remoteFault = 0;
+    this.remoteVelocity = null;
+    this.remoteStatus = null;
+    this.busSeen = new Map();
+    this.busExtAt = 0;
+    this.busHintKey = "";
     if (this.adapter === "ixxat") this.adapter = "virtual";
   }
 
@@ -805,32 +817,107 @@ class Workbench {
     this.remoteNmt = null;
     this.remoteFault = 0;
     this.remoteName = "";
+    this.remoteVelocity = null;
+    this.remoteStatus = null;
+    this.busSeen = new Map();
+    this.busExtAt = 0;
+    this.busHintKey = "";
     this.busOn = true;
     this.info("IXXAT connected: " + this.adapterName + " at " + this.baud + " kbit/s. The practice controller is paused.", "help");
   }
 
   pollHardware() {
     if (!this.hw) return;
-    let batch;
-    try {
-      batch = this.hw.poll(64);
-    } catch (err) {
-      this.info(err.message, "error");
-      return;
-    }
-    for (const note of batch.notes) this.info(note, "error");
-    for (const frame of batch.frames) {
-      this.noteRemote(frame);
-      this.receive(frame);
+    for (let pass = 0; pass < 8; pass++) {
+      let batch;
+      try {
+        batch = this.hw.poll(256);
+      } catch (err) {
+        this.info(err.message, "error");
+        return;
+      }
+      for (const note of batch.notes) this.info(note, "error");
+      for (const frame of batch.frames) {
+        this.noteRemote(frame);
+        this.receive(frame);
+      }
+      if (batch.frames.length < 256) break;
     }
   }
 
+  freshNodes() {
+    const now = Date.now();
+    const rows = [];
+    for (const row of this.busSeen.values()) {
+      if (now - row.at <= 3000) rows.push(row);
+    }
+    rows.sort((a, b) => a.node - b.node);
+    return rows;
+  }
+
+  preferHeardNode(node) {
+    if (this.adapter !== "ixxat") return node;
+    const beats = this.freshNodes().filter((row) => row.heartbeat);
+    if (beats.length !== 1 || beats[0].node === node) return node;
+    this.info("Node " + node + " has no heartbeat. Using node " + beats[0].node + " from the CAN log.", "help");
+    return beats[0].node;
+  }
+
+  explainSdoMiss(node) {
+    const beats = this.freshNodes().filter((row) => row.heartbeat);
+    const beatText = beats.map((row) => row.node + (row.nmt ? " (" + row.nmt + ")" : "")).join(", ");
+    if (beats.length && !beats.some((row) => row.node === node)) {
+      return "SDO timeout on node " + node + ". Heartbeat is coming from node " + beatText + ". Set the controller box to that number and press Find again.";
+    }
+    if (beats.some((row) => row.node === node)) {
+      return "SDO timeout on node " + node + ". That node is heartbeating, and it did not answer the SDO read. Set the toolbar bitrate to the same rate as the inverter, then press Find again.";
+    }
+    if (this.sdoExtCount > 0 && this.sdoRxCount === 0) {
+      return "SDO timeout on node " + node + ". The dongle is receiving 29-bit frames, and no CANopen reply came back.";
+    }
+    if (this.sdoRxCount === 0 && this.sdoExtCount === 0) {
+      return "SDO timeout on node " + node + ". No CAN frame arrived while waiting. Check the bitrate and that the inverter is powered.";
+    }
+    return "SDO timeout on node " + node + ". CAN frames arrived, and none was an SDO reply from that node.";
+  }
+
   noteRemote(frame) {
-    if (frame.ext) return;
+    const now = Date.now();
+    if (frame.ext) {
+      this.busExtAt = now;
+      return;
+    }
     const id = frame.id >>> 0;
     const data = frame.data || [];
+    let node = 0;
+    let kind = "";
+    if (id >= 0x701 && id <= 0x77f) { node = id - 0x700; kind = "heartbeat"; }
+    else if (id >= 0x581 && id <= 0x5ff) { node = id - 0x580; kind = "sdo"; }
+    else if (id >= 0x081 && id <= 0x0ff) { node = id - 0x080; kind = "emcy"; }
+    else if (id >= 0x181 && id <= 0x1ff) { node = id - 0x180; kind = "pdo"; }
+    else if (id >= 0x281 && id <= 0x2ff) { node = id - 0x280; kind = "pdo"; }
+    else if (id >= 0x381 && id <= 0x3ff) { node = id - 0x380; kind = "pdo"; }
+    else if (id >= 0x481 && id <= 0x4ff) { node = id - 0x480; kind = "pdo"; }
+    if (node >= 1 && node <= 127) {
+      const row = this.busSeen.get(node) || { node, heartbeat: false, sdo: false, pdo: false, nmt: "", at: 0 };
+      row.at = now;
+      if (kind === "heartbeat") {
+        row.heartbeat = true;
+        row.nmt = data[0] === 0 ? "boot-up" : data[0] === 4 ? "stopped" : data[0] === 5 ? "operational" : data[0] === 127 ? "pre-operational" : "";
+      } else if (kind === "sdo") row.sdo = true;
+      else if (kind === "pdo") row.pdo = true;
+      this.busSeen.set(node, row);
+    }
     if (id === 0x700 + this.selectedNode && data.length) this.remoteNmt = data[0];
     if (id === 0x080 + this.selectedNode && data.length >= 2) this.remoteFault = data[0] | (data[1] << 8);
+    if (this.adapter === "ixxat") {
+      const beats = this.freshNodes().filter((row) => row.heartbeat).map((row) => String(row.node)).join(", ");
+      if (beats && beats !== this.busHintKey) {
+        this.busHintKey = beats;
+        const extra = beats === String(this.selectedNode) ? "" : " The controller box is " + this.selectedNode + ".";
+        this.info("Heartbeat on the IXXAT adapter from node " + beats + "." + extra, "help");
+      }
+    }
   }
 
   info(text, level = "info") {
@@ -840,6 +927,10 @@ class Workbench {
   }
 
   receive(frame) {
+    if (this.sdoJob) {
+      if (frame.ext) this.sdoExtCount += 1;
+      else this.sdoRxCount += 1;
+    }
     this.pushFrame(Object.assign({ dir: "rx" }, frame));
   }
 
@@ -979,14 +1070,29 @@ class Workbench {
     job.reject(new Error(message));
   }
 
+  sdoWaitMs() {
+    const base = this.sdoTimeout || 1000;
+    if (this.adapter === "ixxat" && base >= 1000) return Math.max(base, 2000);
+    return base;
+  }
+
+  touchSdo() {
+    const job = this.sdoJob;
+    if (!job || job.done) return;
+    clearTimeout(job.timer);
+    job.timer = setTimeout(() => this.failSdo("SDO timeout"), this.sdoWaitMs());
+  }
+
   beginSdo(node, index, sub) {
     if (this.sdoJob && !this.sdoJob.done) this.failSdo("SDO replaced");
+    this.sdoRxCount = 0;
+    this.sdoExtCount = 0;
     const job = { node, index, sub, done: false, toggle: 0, buf: Buffer.alloc(0), size: null };
     const promise = new Promise((resolve, reject) => {
       job.resolve = resolve;
       job.reject = reject;
     });
-    job.timer = setTimeout(() => this.failSdo("SDO timeout"), this.sdoTimeout);
+    job.timer = setTimeout(() => this.failSdo("SDO timeout"), this.sdoWaitMs());
     this.sdoJob = job;
     return { job, promise };
   }
@@ -1011,6 +1117,7 @@ class Workbench {
       const sub = data[3];
       if (!(scs === 4 && index === 0) && (index !== job.index || sub !== job.sub)) return;
     }
+    this.touchSdo();
     if (cmd === 0x80) {
       const code = data[4] | (data[5] << 8) | (data[6] << 16) | (data[7] << 24);
       this.failSdo("SDO abort 0x" + dcf.padHex(code >>> 0, 8));
@@ -1079,12 +1186,31 @@ class Workbench {
     return { id: 0x600 + node, ext: false, data: bytes, dlc: 8 };
   }
 
-  async readRaw(node, index, sub) {
-    if (!this.busOn) throw new Error("CAN is stopped");
+  async readRawOnce(node, index, sub) {
     const { job, promise } = this.beginSdo(node, index, sub);
     job.op = "read";
     this.transmit(this.sdoFrame(node, [0x40, index & 0xff, (index >> 8) & 0xff, sub & 0xff, 0, 0, 0, 0]));
     return promise;
+  }
+
+  async readRaw(node, index, sub) {
+    if (!this.busOn) throw new Error("CAN is stopped");
+    const attempts = this.adapter === "ixxat" ? 2 : 1;
+    let caught = null;
+    for (let attempt = 0; attempt < attempts; attempt++) {
+      try {
+        return await this.readRawOnce(node, index, sub);
+      } catch (err) {
+        caught = err;
+        if (!/SDO timeout/.test(String(err.message))) throw err;
+        const why = this.explainSdoMiss(node);
+        const lost = this.sdoRxCount > 0 || this.sdoExtCount > 0;
+        if (attempt === attempts - 1 || !lost || /Heartbeat is coming|29-bit frames|No CAN frame/.test(why)) {
+          throw new Error(why);
+        }
+      }
+    }
+    throw caught || new Error(this.explainSdoMiss(node));
   }
 
   async writeRaw(node, index, sub, payload) {
@@ -1113,11 +1239,10 @@ class Workbench {
   }
 
   async readObject(node, index, sub) {
-    const obj = node === this.node.id ? this.liveObject(index, sub) : null;
-    const type = obj ? obj.type : dcf.DT.UNSIGNED32;
+    const template = this.liveObject(index, sub);
+    const type = template ? template.type : dcf.DT.UNSIGNED32;
     const bytes = await this.readRaw(node, index, sub);
-    const value = obj ? decodeBytes(obj.type, bytes) : decodeBytes(type, bytes);
-    return { value, bytes, obj };
+    return { value: decodeBytes(type, bytes), bytes, obj: node === this.node.id ? template : null };
   }
 
   objectForWrite(node, index, sub, rawValue) {
@@ -1165,24 +1290,32 @@ class Workbench {
     this.transmit({ id: 0, ext: false, data: [byte, node & 0x7f], dlc: 2 });
   }
 
+  async readInverterLive(node) {
+    if (this.adapter !== "ixxat") return;
+    try { this.remoteStatus = (await this.readObject(node, 0x6041, 0)).value >>> 0; } catch { /* the name already answered */ }
+    try { this.remoteVelocity = (await this.readObject(node, 0x606c, 0)).value | 0; } catch { /* speed is optional */ }
+  }
+
   async ping(nodeId) {
-    const node = nodeId || this.selectedNode;
+    let node = this.preferHeardNode(nodeId || this.selectedNode);
     this.selectedNode = node;
     try {
       const name = await this.readObject(node, 0x1008, 0);
-      const type = await this.readObject(node, 0x1000, 0);
+      let deviceType = 0;
+      try { deviceType = (await this.readObject(node, 0x1000, 0)).value >>> 0; } catch { deviceType = 0; }
       this.helperMode = "online";
       this.dcfDoc = null;
       this.dcfDirty = false;
       this.dictEpoch += 1;
       this.remoteName = String(name.value);
+      await this.readInverterLive(node);
       const nmt = this.adapter === "ixxat" && this.remoteNmt == null ? "no heartbeat yet" : this.nmtName().toLowerCase();
-      this.info(`Ping node ${node}: ${name.value} (${nmt}), device type 0x${dcf.padHex(type.value, 8)}`, "help");
-      return { ok: true, name: name.value };
+      this.info(`Ping node ${node}: ${name.value} (${nmt}), device type 0x${dcf.padHex(deviceType, 8)}`, "help");
+      return { ok: true, name: name.value, node };
     } catch (err) {
       this.helperMode = "offline";
       this.info(`Ping node ${node} failed: ${err.message}`, "error");
-      return { ok: false, error: err.message };
+      return { ok: false, error: err.message, node };
     }
   }
 
@@ -1584,13 +1717,13 @@ class Workbench {
     if (this.adapter === "ixxat") {
       const code = this.remoteFault || 0;
       return {
-        velocityRpm: 0,
+        velocityRpm: this.remoteVelocity == null ? 0 : this.remoteVelocity,
         torquePct: 0,
         currentA: 0,
         vdcV: 0,
         tempM: 0,
         tempC: 0,
-        statusword: 0,
+        statusword: this.remoteStatus || 0,
         faultCode: code,
         faultText: EMCY_TEXT[code] || (code ? "0x" + dcf.padHex(code, 4) : ""),
         faultCheck: EMCY_CHECK[code] || "",
@@ -1668,6 +1801,8 @@ class Workbench {
       adapter: this.adapter,
       adapterName: this.adapterName,
       selectedNode: this.selectedNode,
+      busNodes: this.freshNodes().map((row) => ({ node: row.node, heartbeat: row.heartbeat, sdo: row.sdo, pdo: row.pdo, nmt: row.nmt })),
+      busExt: Date.now() - (this.busExtAt || 0) < 3000,
       nmtName: this.nmtName(),
       driveState: this.adapter === "ixxat" ? (this.remoteFault ? "fault" : "hardware") : this.node.driveState,
       helperMode: this.helperMode,

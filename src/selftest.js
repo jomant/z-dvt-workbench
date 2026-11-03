@@ -165,6 +165,51 @@ async function main() {
   engine.tick(0.1);
   assert(engine.remoteNmt === 5, "heartbeat from the dongle sets NMT");
   assert(engine.frames.some((frame) => frame.id === 0x701 && frame.dir === "rx"), "dongle frame logged");
+
+  engine.sdoTimeout = 40;
+  engine.helperMode = "offline";
+  engine.selectedNode = 1;
+  engine.busSeen = new Map();
+  engine.busHintKey = "";
+  const queued = [];
+  engine.hw = {
+    write(frame) {
+      const data = frame.data || [];
+      if (data[0] !== 0x40) return;
+      const index = data[1] | (data[2] << 8);
+      const sub = data[3];
+      const node = frame.id - 0x600;
+      let payload = [0, 0, 0, 0];
+      if (index === 0x1008) payload = [0x54, 0x65, 0x73, 0x74];
+      if (index === 0x1000) payload = [0x92, 0x01, 0x02, 0x00];
+      queued.push({ id: 0x580 + node, ext: false, dlc: 8, data: [0x43, index & 0xff, (index >> 8) & 0xff, sub, payload[0], payload[1], payload[2], payload[3]] });
+    },
+    poll() {
+      return { frames: queued.splice(0, queued.length), notes: [] };
+    },
+    close() {},
+  };
+  engine.noteRemote({ id: 0x708, ext: false, data: [127], dlc: 1 });
+  const pending = engine.ping(1);
+  let settled = null;
+  pending.then((value) => { settled = { ok: true, value }; }, (err) => { settled = { ok: false, err }; });
+  for (let i = 0; i < 30 && !settled; i++) {
+    engine.tick(0.1);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  assert(settled && settled.ok, "ping follows heartbeat, " + (settled && settled.err && settled.err.message));
+  assert(engine.selectedNode === 8, "selected node follows heartbeat, got " + engine.selectedNode);
+  assert(settled && settled.value && String(settled.value.name).startsWith("Test"), "inverter name from node 8");
+
+  engine.helperMode = "offline";
+  engine.selectedNode = 1;
+  engine.busSeen = new Map();
+  engine.hw = { write() {}, poll() { return { frames: [], notes: [] }; }, close() {} };
+  engine.noteRemote({ id: 0x708, ext: false, data: [127], dlc: 1 });
+  engine.noteRemote({ id: 0x709, ext: false, data: [5], dlc: 1 });
+  const missed = await engine.ping(1);
+  assert(missed.ok === false && /Heartbeat is coming from node 8/.test(missed.error), "timeout names the heartbeat nodes, got " + (missed && missed.error));
+
   engine.adapter = "virtual";
   engine.hw = null;
 
