@@ -21,7 +21,7 @@ Practice controller, no hardware
 Inverter setup
 1. Press Setup on the toolbar.
 2. Nameplate. Enter the motor name, pole pairs, rated current, rated DC voltage, top speed, and encoder pulses. Press Next.
-3. Find. Press Find the controller and store the nameplate.
+3. Find. Press Find the controller and store the nameplate. If the controller has no object 0x2000, those numbers stay on the setup sheet and the slow spin still runs.
 4. Slow spin. Press Run the slow test. The shaft turns up to about 100 rpm, then stops.
 5. Direction. Press Turn the shaft for the direction check. Press Yes, that direction is right, or No, it turned the wrong way. No swaps leads V and W.
 6. Save. Press Save the setup sheet and the settings file.

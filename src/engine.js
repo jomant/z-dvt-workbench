@@ -44,6 +44,27 @@ const MODE_ENUM = [
   { v: 4, t: "Profile torque" },
 ];
 
+const SDO_ABORT = {
+  0x05030000: "The toggle bit did not match.",
+  0x05040000: "The SDO timed out in the controller.",
+  0x05040001: "The command was not valid for this object.",
+  0x06010000: "This object cannot be accessed.",
+  0x06010001: "This object is write-only.",
+  0x06010002: "This object is read-only.",
+  0x06020000: "That object is not in this controller.",
+  0x06040041: "The object cannot be mapped to a PDO.",
+  0x06040042: "The mapped length does not fit.",
+  0x06070010: "The data type does not match.",
+  0x06090011: "The sub index does not exist.",
+  0x06090030: "The value is outside the range.",
+  0x06090031: "The value is too high.",
+  0x06090032: "The value is too low.",
+  0x08000000: "The controller rejected the command.",
+  0x08000020: "The controller could not store the value.",
+  0x08000021: "The controller could not store the value because of its local control.",
+  0x08000022: "The controller is not in the right state for this object.",
+};
+
 function settingsPath() {
   const dir = path.join(process.env.APPDATA || path.join(os.homedir(), "AppData", "Roaming"), "ZDVTWorkbench");
   return { dir, file: path.join(dir, "settings.json") };
@@ -1121,8 +1142,10 @@ class Workbench {
     }
     this.touchSdo();
     if (cmd === 0x80) {
-      const code = data[4] | (data[5] << 8) | (data[6] << 16) | (data[7] << 24);
-      this.failSdo("SDO abort 0x" + dcf.padHex(code >>> 0, 8));
+      const code = (data[4] | (data[5] << 8) | (data[6] << 16) | (data[7] << 24)) >>> 0;
+      const where = "0x" + dcf.padHex(job.index, 4) + ":" + job.sub;
+      const why = SDO_ABORT[code] || "";
+      this.failSdo("SDO abort " + where + " 0x" + dcf.padHex(code, 8) + (why ? ". " + why : ""));
       return;
     }
     if (job.op === "read" && scs === 2) {
@@ -1259,6 +1282,53 @@ class Workbench {
       return { index, sub, name: "Object", type, access: "rw", value: numeric };
     }
     return { index, sub, name: "Object", type: dcf.DT.VISIBLE_STRING, access: "rw", value: String(rawValue) };
+  }
+
+  async tryNameplateWrite(node, index, sub, value) {
+    try {
+      await this.writeObject(node, index, sub, value);
+      return "stored";
+    } catch (err) {
+      const text = String(err && err.message || err);
+      if (/06020000|06090011|not in the demo dictionary|not in this controller/.test(text)) return "missing";
+      return text;
+    }
+  }
+
+  async storeNameplate(plate) {
+    const node = this.selectedNode;
+    const practice = [
+      [0x2000, 5, plate.name],
+      [0x2000, 1, plate.poles],
+      [0x2000, 2, Math.round(Number(plate.amps) * 10)],
+      [0x2000, 3, plate.rpm],
+      [0x2000, 4, plate.ppr],
+      [0x2000, 7, Math.round(Number(plate.volts) * 10)],
+      [0x2001, 2, Math.min(20000, Number(plate.rpm) || 0)],
+    ];
+    const cia = [
+      [0x6075, 0, Math.round(Number(plate.amps) * 1000)],
+      [0x6080, 0, plate.rpm],
+      [0x607f, 0, plate.rpm],
+    ];
+    let keptLocal = false;
+    for (const [index, sub, value] of practice) {
+      const outcome = await this.tryNameplateWrite(node, index, sub, value);
+      if (outcome === "missing") keptLocal = true;
+      else if (outcome !== "stored") return { ok: false, error: outcome };
+    }
+    const ciaWrote = [];
+    if (keptLocal) {
+      for (const [index, sub, value] of cia) {
+        const outcome = await this.tryNameplateWrite(node, index, sub, value);
+        if (outcome === "stored") ciaWrote.push("0x" + dcf.padHex(index, 4));
+      }
+    }
+    if (keptLocal) {
+      const extra = ciaWrote.length ? " Stored " + ciaWrote.join(", ") + "." : "";
+      this.info("Object 0x2000 is not in this controller. SDO abort 0x06020000 means that object is not in the dictionary. The nameplate stays on the setup sheet." + extra, "help");
+    }
+    return { ok: true, keptLocal, cia: ciaWrote };
   }
 
   async writeObject(node, index, sub, rawValue, force) {
@@ -2003,6 +2073,7 @@ class Workbench {
         return { ok: false, error: err.message };
       }
     }
+    if (type === "nameplate") return this.storeNameplate(msg);
     if (type === "estop") return this.estop();
     if (type === "nudge") return this.nudgeSpeed(msg.dir);
     if (type === "cia402") {

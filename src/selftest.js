@@ -230,6 +230,28 @@ async function main() {
   assert(engine.node.driveState === "quick stop", "operator can e-stop");
   engine.accessLevel = "engineer";
 
+  let abortMsg = "";
+  try {
+    await engine.readObject(1, 0x2222, 0);
+  } catch (err) {
+    abortMsg = err.message;
+  }
+  assert(/SDO abort 0x2222:0 0x06020000/.test(abortMsg) && /not in this controller/.test(abortMsg), "missing object abort, got " + abortMsg);
+
+  const plate = { name: "Bench", poles: 4, amps: 12.5, volts: 48, rpm: 3000, ppr: 64 };
+  const onPractice = await engine.storeNameplate(plate);
+  assert(onPractice.ok && !onPractice.keptLocal, "practice nameplate stores, got " + JSON.stringify(onPractice));
+  assert(engine.node.get(0x2000, 1).value === 4, "pole pairs stored");
+  for (const sub of [0, 1, 2, 3, 4, 5, 6, 7]) engine.node.objects.delete(engine.node.key(0x2000, sub));
+  engine.node.objects.delete(engine.node.key(0x2001, 2));
+  engine.node.add(0x6075, 0, "Motor rated current", dcf.DT.UNSIGNED32, "rw", 0);
+  engine.node.add(0x6080, 0, "Max motor speed", dcf.DT.UNSIGNED32, "rw", 0);
+  const onInverter = await engine.storeNameplate(plate);
+  assert(onInverter.ok && onInverter.keptLocal, "missing 0x2000 stays on the sheet, got " + JSON.stringify(onInverter));
+  assert(onInverter.cia.includes("0x6075") && onInverter.cia.includes("0x6080"), "standard current and speed stored");
+  assert(engine.node.get(0x6075, 0).value === 12500, "rated current in mA");
+  assert(engine.node.get(0x6080, 0).value === 3000, "max motor speed");
+
   if (engine.sdoJob && engine.sdoJob.timer) clearTimeout(engine.sdoJob.timer);
   engine.stop();
   fs.unlinkSync(tmp);

@@ -528,19 +528,9 @@ async function applyNameplate() {
   if (!(plate.poles >= 1) || !(plate.amps >= 0) || !(plate.volts >= 0) || !(plate.rpm >= 1) || !(plate.ppr >= 1)) {
     throw new Error("Check the nameplate numbers.");
   }
-  const writes = [
-    [0x2000, 5, plate.name],
-    [0x2000, 1, plate.poles],
-    [0x2000, 2, Math.round(plate.amps * 10)],
-    [0x2000, 3, plate.rpm],
-    [0x2000, 4, plate.ppr],
-    [0x2000, 7, Math.round(plate.volts * 10)],
-    [0x2001, 2, Math.min(20000, plate.rpm)],
-  ];
-  for (const [index, sub, value] of writes) {
-    const result = await act({ type: "write", index, sub, value });
-    if (!result.ok) throw new Error(result.error || "The controller rejected a nameplate value.");
-  }
+  const result = await act(Object.assign({ type: "nameplate" }, plate));
+  if (!result.ok) throw new Error(result.error || "The controller rejected a nameplate value.");
+  return result;
 }
 
 function sleep(ms) {
@@ -1252,10 +1242,16 @@ function bind() {
       const node = Number($("node-id").value) || 1;
       const ping = await act({ type: "ping", node });
       if (!ping.ok) throw new Error(ping.error || "The controller did not answer.");
-      await applyNameplate();
+      const stored = await applyNameplate();
       wiz.found = true;
       const heard = ping.node || node;
-      $("wiz-find-result").textContent = `Controller ${heard} answered${ping.name ? " as " + ping.name : ""}. The nameplate is stored.`;
+      const named = ping.name ? " as " + ping.name : "";
+      if (stored.keptLocal) {
+        const cia = stored.cia && stored.cia.length ? " Stored " + stored.cia.join(", ") + "." : "";
+        $("wiz-find-result").textContent = `Controller ${heard} answered${named}. Object 0x2000 is not in this controller. SDO abort 0x06020000 means that object is not in the dictionary. Pole pairs, encoder, and the motor name stay on the setup sheet.${cia} You can run the slow spin.`;
+      } else {
+        $("wiz-find-result").textContent = `Controller ${heard} answered${named}. The nameplate is stored.`;
+      }
     } catch (err) {
       wiz.found = false;
       $("wiz-find-result").textContent = err.message;
