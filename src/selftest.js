@@ -235,6 +235,22 @@ async function main() {
   fs.unlinkSync(tmp);
   fs.unlinkSync(tmp2);
 
+  const launchDir = path.join(os.tmpdir(), "zdvt update test");
+  fs.mkdirSync(launchDir, { recursive: true });
+  const launchMarker = path.join(launchDir, "ran.txt");
+  const fakeSetup = path.join(launchDir, "setup.cmd");
+  try { fs.unlinkSync(launchMarker); } catch { /* first run */ }
+  fs.writeFileSync(fakeSetup, "@echo off\r\necho ok> \"" + launchMarker + "\"\r\nexit /b 0\r\n");
+  updater.launchInstaller(fakeSetup, { relaunch: false });
+  let launchCode = null;
+  const launchUntil = Date.now() + 8000;
+  while (launchCode == null && Date.now() < launchUntil) {
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    if (fs.existsSync(launchMarker)) launchCode = updater.consumeUpdateResult();
+  }
+  assert(fs.existsSync(launchMarker), "setup launch keeps running after this program closes");
+  assert(launchCode === "0", "setup result is success, got " + launchCode);
+
   if (failed) {
     console.error(failed + " failed");
     process.exit(1);

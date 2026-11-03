@@ -1902,7 +1902,7 @@ class Workbench {
     this.progress = "Downloading " + this.updateOffer.version;
     const file = await updater.download(this.updateOffer);
     this.progress = "";
-    this.info("Starting the installer for " + this.updateOffer.version + ". This window will close.", "help");
+    this.info("Closing so " + this.updateOffer.version + " can install. If Windows asks for permission, choose Yes.", "help");
     updater.launchInstaller(file);
     this.stop();
     return { ok: true, shutdown: true };

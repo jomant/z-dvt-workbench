@@ -145,6 +145,9 @@ async function main() {
     fs.appendFileSync(path.join(logDir, "server.log"), new Date().toISOString() + " listening " + PORT + "\n");
   } catch { /* logging is optional */ }
   console.log("Z-DVT Workbench  http://127.0.0.1:" + PORT);
+  const updateCode = updater.consumeUpdateResult();
+  if (updateCode === "0") engine.info("Updated to " + engine.version + ".", "help");
+  else if (updateCode) engine.info("The update did not finish. When Windows asks for permission, choose Yes.", "error");
   if (!process.env.DVT_NO_BROWSER) openBrowser(PORT);
   updater.check(engine.version).then((offer) => {
     if (!offer) return;

@@ -96,4 +96,4 @@ The setup program shows this same list when installation finishes. A copy is als
 
 1. Open Help and choose Check for updates.
 2. When a newer version is on GitHub, the bar at the bottom offers Download and install.
-3. The workbench closes, then the setup program opens and replaces this copy.
+3. The workbench closes. Windows asks for permission. Choose Yes. The setup program replaces this copy and opens it again.

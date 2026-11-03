@@ -925,7 +925,7 @@ const HELP = [
   ["CiA 402", "Shutdown, switch on, enable operation, quick stop, disable voltage, and fault reset follow the standard controlword. Profile velocity, profile torque, and profile position are accepted. The virtual shaft ramps with the acceleration and deceleration objects."],
   ["E-stop and speed keys", "The red E-STOP button sets the target speed to 0 and sends a quick stop. Space does the same, except while you are typing in a text box. Arrow up adds 100 rpm. Arrow down subtracts 100 rpm. The first arrow also enables profile velocity if the drive is not already running. The command line keeps its own arrow keys for history."],
   ["J1939", "The demand window sends TSC1, PGN 0. Requested speed is 0.125 rpm per bit. Requested torque is 1 percent per bit with an offset of -125 percent. The tool address defaults to 250 (0xFA)."],
-  ["Updates", "Help, Check for updates, looks at the public project on GitHub. When a newer setup program is published, a bar at the bottom downloads it and starts the installer. This window closes so the files can be replaced."],
+  ["Updates", "Help, Check for updates, looks at the public project on GitHub. When a newer setup program is published, a bar at the bottom downloads it. This window closes, Windows asks for permission, and the setup program replaces this copy and opens it again."],
   ["Not included", "This is not a BorgWarner or Sevcon product. It does not program vendor firmware, does not implement a vendor security unlock, and does not ship the vendor object database. A DCF you already have still opens, because those names are stored in the file."],
 ];
 
@@ -1320,7 +1320,7 @@ document.addEventListener("keyup", (event) => {
 });
 window.addEventListener("blur", stopNudge);
 $("update-go").addEventListener("click", async () => {
-  $("update-text").textContent = "Downloading the installer…";
+  $("update-text").textContent = "Downloading the installer. The setup window opens next.";
   const result = await act({ type: "update", install: true });
   if (result && !result.ok) $("update-text").textContent = result.error || "The download did not finish.";
 });
