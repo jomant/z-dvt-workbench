@@ -945,7 +945,7 @@ function coastTorque(text, inertia) {
 const HELP = [
   ["What this is", "Z-DVT Workbench, crafted by Z-Jomant Meister, watches CAN, talks CANopen, edits settings files, and runs a motor on the bench. It does not load the IXXAT VCI4 Tcl DLL, so the license error in DVT Customer 2025.05b does not apply. A practice controller is already on the bus as number 1."],
   ["First steps", "Use the four steps under the toolbar. Find the controller, allow it to run, spin the shaft, then open Phases. The motor picture shows leads U, V and W. Swapping V and W reverses the shaft."],
-  ["IXXAT adapter", "CAN menu, Connect IXXAT, opens the USB-CAN dongle through the VCI library. The practice controller pauses, so the CAN log and the SDO commands are the inverter. The VCI4 Tcl license DLL is not loaded. Disconnect CAN, or Connect virtual CAN, returns to the practice bus. If Find says SDO timeout, use the node number from the heartbeat line in the CAN log. The status line names that node, and Find follows it when it is the only heartbeat."],
+  ["IXXAT adapter", "CAN menu, Connect IXXAT, opens the USB-CAN dongle through the VCI library. The practice controller pauses, so the CAN log and the SDO commands are the inverter. The VCI4 Tcl license DLL is not loaded. Disconnect CAN, or Connect virtual CAN, returns to the practice bus. Find searches every heartbeat node, starts a silent node once, and keeps the node that answers an SDO."],
   ["3-phase identification", "Light one lead at a time and the shaft mark is pulled to that lead. Run the field and the leads light in a circle. If the real motor turns the wrong way, swap the V and W cables and look again."],
   ["Commands", "The command window takes the same kind of lines as the old console: read 0x1008 0, write 0x60FF 0 1500, nmt start, demand enable, dcf open <path>, trace arm. Type help there for the full list."],
   ["DCF files", "Open a .dcf or .eds from Offline DCF. Names, values, comments, and unknown keys are kept. Compare two files and ignore read-only objects when you only care about settings. Save writes the file back if it was opened from a path, and also downloads a copy."],
@@ -958,6 +958,9 @@ const HELP = [
 ];
 
 const CHANGELOG = [
+  { version: "2026.9.10", notes: [
+    "Find searches every heartbeat node, starts a silent node once, and keeps the node that answers.",
+  ]},
   { version: "2026.9.9", notes: [
     "Pre-operational and Operational change the motor state. Object 0x2800 is written when the controller has it, and NMT is sent as well.",
     "The slow spin enters Pre-operational, writes profile velocity to object 0x6060, or to object 0x2900 when 0x6060 is missing, then returns to Operational.",
@@ -1327,35 +1330,26 @@ function bind() {
   $("wiz-back").addEventListener("click", () => { if (wiz.step > 1) showWizard(wiz.step - 1); });
   $("wiz-next").addEventListener("click", wizardNext);
   $("wiz-find").addEventListener("click", async () => {
-    $("wiz-find-result").textContent = "Looking for the controller…";
+    $("wiz-find-result").textContent = "Searching the bus…";
     try {
       const node = Number($("node-id").value) || 1;
-      const ping = await act({ type: "ping", node });
-      if (!ping.ok) throw new Error(ping.error || "The controller did not answer.");
+      const survey = await act({ type: "survey", node });
+      const rows = survey.rows || [];
+      const chosenRow = rows.find((row) => row.node === survey.chosen);
+      if (!survey.ok || !chosenRow) throw new Error(rows.map((row) => row.line).join(" ") || "No controller answered.");
+      $("node-id").value = survey.chosen;
       const stored = await applyNameplate();
-      const probe = await act({ type: "probe402" });
       wiz.found = true;
-      const heard = ping.node || node;
-      const named = ping.name ? " as " + ping.name : "";
-      const blocked = probe && probe.known && probe.canSpin === false;
-      if (blocked) wiz.noControlword = true;
-      let spinLine = "";
-      if (blocked && probe.missing.includes("0x6040")) {
-        spinLine = " Object 0x6040 is not in this controller, so there is no CiA 402 controlword. SDO abort 0x06020000 means that object is not in the dictionary. Use Pre-operational and Operational on the next step to change the motor state. The slow spin leaves the shaft stopped.";
-      } else if (blocked) {
-        spinLine = " Object " + probe.missing.join(" and ") + " is not in this controller. The slow spin leaves the shaft stopped.";
-      }
-      if (probe && probe.missing && probe.missing.includes("0x6060") && !probe.missing.includes("0x2900")) {
-        spinLine += " Object 0x6060 is not in this controller. The slow spin writes profile velocity to object 0x2900.";
-      } else if (probe && probe.missing && probe.missing.includes("0x6060")) {
-        spinLine += " Object 0x6060 is not in this controller.";
-      }
+      wiz.noControlword = !chosenRow.canSpin;
+      let text = rows.map((row) => row.line).join(" ");
       if (stored.keptLocal) {
         const cia = stored.cia && stored.cia.length ? " Stored " + stored.cia.join(", ") + "." : "";
-        $("wiz-find-result").textContent = `Controller ${heard} answered${named}. Object 0x2000 is not in this controller. SDO abort 0x06020000 means that object is not in the dictionary. Pole pairs, encoder, and the motor name stay on the setup sheet.${cia}${spinLine}`;
+        text += " Object 0x2000 is not in this controller. Pole pairs, encoder, and the motor name stay on the setup sheet." + cia;
       } else {
-        $("wiz-find-result").textContent = `Controller ${heard} answered${named}. The nameplate is stored.${spinLine}`;
+        text += " The nameplate is stored.";
       }
+      if (!chosenRow.canSpin) text += " The slow spin leaves the shaft stopped.";
+      $("wiz-find-result").textContent = text;
     } catch (err) {
       wiz.found = false;
       $("wiz-find-result").textContent = err.message;

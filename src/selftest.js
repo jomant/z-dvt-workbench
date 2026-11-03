@@ -398,6 +398,12 @@ async function main() {
 
   const present = await engine.probeDrive(1);
   assert(present.canSpin === true, "practice controller can spin, got " + JSON.stringify(present));
+  engine.noteRemote({ id: 0x77a, ext: false, data: [4], dlc: 1 });
+  const survey = await engine.surveyBus(1);
+  const quiet = survey.rows.find((row) => row.node === 122);
+  assert(survey.chosen === 1 && engine.selectedNode === 1, "survey keeps the node that answers, got " + survey.chosen);
+  assert(quiet && quiet.ok === false && /did not answer an SDO after NMT start/.test(quiet.line), "silent heartbeat is reported, got " + (quiet && quiet.line));
+  assert(survey.rows.some((row) => row.node === 1 && row.canSpin), "survey sees the practice controlword");
   engine.node.objects.delete(engine.node.key(0x6040, 0));
   const absent = await engine.probeDrive(1);
   assert(absent.known && absent.missing.includes("0x6040") && absent.canSpin === false, "missing controlword is reported, got " + JSON.stringify(absent));

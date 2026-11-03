@@ -865,10 +865,7 @@ class Workbench {
         return;
       }
       for (const note of batch.notes) this.info(note, "error");
-      for (const frame of batch.frames) {
-        this.noteRemote(frame);
-        this.receive(frame);
-      }
+      for (const frame of batch.frames) this.receive(frame);
       if (batch.frames.length < 256) break;
     }
   }
@@ -898,6 +895,10 @@ class Workbench {
       return "SDO timeout on node " + node + ". Heartbeat is coming from node " + beatText + ". Set the controller box to that number and press Find again.";
     }
     if (beats.some((row) => row.node === node)) {
+      const otherAnswers = this.freshNodes().some((row) => row.node !== node && row.sdo);
+      if (otherAnswers) {
+        return "SDO timeout on node " + node + ". That node is heartbeating and did not answer an SDO. Another node on this bus already answers, so the bitrate matches.";
+      }
       return "SDO timeout on node " + node + ". That node is heartbeating, and it did not answer the SDO read. Set the toolbar bitrate to the same rate as the inverter, then press Find again.";
     }
     if (this.sdoExtCount > 0 && this.sdoRxCount === 0) {
@@ -955,6 +956,7 @@ class Workbench {
   }
 
   receive(frame) {
+    this.noteRemote(frame);
     if (this.sdoJob) {
       if (frame.ext) this.sdoExtCount += 1;
       else this.sdoRxCount += 1;
@@ -1601,6 +1603,90 @@ class Workbench {
     return { ok: true, known: true, missing, canSpin };
   }
 
+  async surveyBus(preferred) {
+    const prefer = Number(preferred) || this.selectedNode || 1;
+    if (this.adapter === "ixxat" && !this.freshNodes().some((row) => row.heartbeat)) {
+      const until = Date.now() + 1200;
+      while (Date.now() < until && !this.freshNodes().some((row) => row.heartbeat)) {
+        this.pollHardware();
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+    }
+    const ids = [];
+    const push = (id) => {
+      const node = Number(id) || 0;
+      if (node >= 1 && node <= 127 && !ids.includes(node)) ids.push(node);
+    };
+    push(prefer);
+    for (const row of this.freshNodes()) {
+      if (row.heartbeat) push(row.node);
+    }
+    const rows = [];
+    for (const node of ids) rows.push(await this.surveyNode(node));
+    const chosen = this.pickSurveyNode(rows, prefer);
+    this.selectedNode = chosen ? chosen.node : prefer;
+    const text = rows.map((row) => row.line).join(" ");
+    if (text) this.info(text, "help");
+    return { ok: !!chosen, chosen: chosen ? chosen.node : 0, rows };
+  }
+
+  pickSurveyNode(rows, prefer) {
+    const rank = (row) => {
+      if (!row.ok) return 0;
+      if (row.canSpin) return 3;
+      if (row.motorState) return 2;
+      return 1;
+    };
+    let best = null;
+    for (const row of rows) {
+      const score = rank(row);
+      if (!score) continue;
+      if (!best || score > rank(best) || (score === rank(best) && row.node === prefer)) best = row;
+    }
+    return best;
+  }
+
+  async surveyNode(node) {
+    let ping = await this.ping(node, true);
+    let started = false;
+    const beat = () => this.freshNodes().find((row) => row.node === node && row.heartbeat);
+    if (!ping.ok && beat()) {
+      this.nmt("start", node);
+      started = true;
+      await new Promise((resolve) => setTimeout(resolve, 80));
+      if (this.adapter === "ixxat") this.pollHardware();
+      ping = await this.ping(node, true);
+    }
+    if (!ping.ok) {
+      const state = beat() && beat().nmt ? beat().nmt : "heartbeat";
+      return {
+        node,
+        ok: false,
+        canSpin: false,
+        motorState: false,
+        missing: [],
+        line: "Node " + node + " is sending a " + state + " heartbeat and did not answer an SDO" + (started ? " after NMT start" : "") + ".",
+      };
+    }
+    const probe = await this.probeDrive(node);
+    const missing = probe.missing || [];
+    const motorState = !missing.includes("0x2800");
+    let slaves = "";
+    const count = await this.readOptional(node, 0x2810, 0);
+    if (count.known) {
+      const first = Number(count.value) > 0 ? await this.readOptional(node, 0x2810, 1) : { known: false };
+      slaves = " Slave list 0x2810 count " + (Number(count.value) >>> 0) + (first.known ? ", first node " + (Number(first.value) >>> 0) : "") + ".";
+    }
+    let line = "Node " + node + " answered" + (ping.name ? " as " + ping.name : "") + ".";
+    if (probe.canSpin) line += " The CiA 402 controlword is present.";
+    else if (missing.includes("0x6040")) line += " Object 0x6040 is not in this controller.";
+    if (missing.includes("0x6060") && missing.includes("0x2900")) line += " Objects 0x6060 and 0x2900 are not in this controller.";
+    else if (missing.includes("0x6060")) line += " Object 0x6060 is not in this controller. Profile velocity can be written to object 0x2900.";
+    if (motorState) line += " Motor state uses object 0x2800.";
+    line += slaves;
+    return { node, ok: true, name: ping.name || "", canSpin: !!probe.canSpin, motorState, missing, line };
+  }
+
   async writeObject(node, index, sub, rawValue, force) {
     const obj = this.objectForWrite(node, index, sub, rawValue);
     if (!obj) throw new Error("Object 0x" + dcf.padHex(index, 4) + ":" + sub + " is not in the demo dictionary");
@@ -1638,8 +1724,8 @@ class Workbench {
     try { this.remoteVelocity = (await this.readObject(node, 0x606c, 0)).value | 0; } catch { /* speed is optional */ }
   }
 
-  async ping(nodeId) {
-    let node = this.preferHeardNode(nodeId || this.selectedNode);
+  async ping(nodeId, stay) {
+    let node = stay ? (Number(nodeId) || this.selectedNode) : this.preferHeardNode(nodeId || this.selectedNode);
     this.selectedNode = node;
     let nameValue = "";
     let nameError = "";
@@ -2388,6 +2474,7 @@ class Workbench {
     }
     if (type === "nameplate") return this.storeNameplate(msg);
     if (type === "probe402") return this.probeDrive(msg.node);
+    if (type === "survey") return this.surveyBus(msg.node || this.selectedNode);
     if (type === "estop") return this.estop();
     if (type === "nudge") return this.nudgeSpeed(msg.dir);
     if (type === "motorState") {
