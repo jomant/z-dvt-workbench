@@ -97,6 +97,15 @@ async function main() {
   assert(engine.frames.some((frame) => frame.type === "emcy"), "emcy logged");
   await engine.execute("fault clear");
   assert(engine.node.driveState !== "fault", "fault cleared");
+  await engine.execute("fault 0x3210");
+  let heldOff = "";
+  try { await engine.commissionVelocity(); } catch (err) { heldOff = err.message; }
+  assert(/Fault/.test(heldOff) && /leaves the shaft stopped/.test(heldOff), "commission stops in fault, got " + heldOff);
+  await engine.demand("faultreset");
+  assert(engine.node.driveState === "ready", "fault reset then shutdown, got " + engine.node.driveState);
+  const commissioned = await engine.commissionVelocity();
+  assert(commissioned.state === "Operation enabled", "profile velocity commission, got " + commissioned.state);
+  assert((engine.node.statusword() & 0x6f) === 0x27, "statusword is operation enabled");
 
   engine.transmit({
     id: 0x0c0021fa,

@@ -73,7 +73,7 @@ The setup program shows this same list when installation finishes. A copy is als
 1. Press Setup on the toolbar.
 2. Nameplate. Enter the motor name, pole pairs, rated current, rated DC voltage, top speed, and encoder pulses. Press Next.
 3. Find. Press Find the controller and store the nameplate. If the controller has no object 0x2000, those numbers stay on the setup sheet. If it has no object 0x6040, the slow spin leaves the shaft stopped.
-4. Slow spin. Press Run the slow test. When the controller has the CiA 402 controlword, the shaft turns up to about 100 rpm, then stops.
+4. Slow spin. Press Run the slow test. The workbench sets profile velocity, then sends Shutdown, Switch on, and Enable operation. When the statusword says Operation enabled, the shaft turns up to about 100 rpm, then stops. If object 0x6040 is missing, the shaft stays stopped.
 5. Direction. Press Turn the shaft for the direction check. Press Yes, that direction is right, or No, it turned the wrong way. No swaps leads V and W.
 6. Save. Press Save the setup sheet and the settings file.
 

@@ -368,20 +368,15 @@ class VirtualNode {
       this.driveState = "switch on disabled";
       this.faultCode = 0;
       this.errorRegister = 0;
-      return;
+    } else if (this.driveState !== "fault") {
+      if ((cw & 0x02) === 0) {
+        if ((cw & 0x80) === 0) this.driveState = "switch on disabled";
+      } else if ((cw & 0x04) === 0) this.driveState = "quick stop";
+      else if ((cw & 0x0f) === 0x0f) this.driveState = "operation enabled";
+      else if ((cw & 0x0f) === 0x07) this.driveState = "switched on";
+      else if ((cw & 0x07) === 0x06) this.driveState = "ready";
     }
-    if (this.driveState === "fault") return;
-    if ((cw & 0x02) === 0) {
-      if ((cw & 0x80) === 0) this.driveState = "switch on disabled";
-      return;
-    }
-    if ((cw & 0x04) === 0) {
-      this.driveState = "quick stop";
-      return;
-    }
-    if ((cw & 0x0f) === 0x0f) this.driveState = "operation enabled";
-    else if ((cw & 0x0f) === 0x07) this.driveState = "switched on";
-    else if ((cw & 0x07) === 0x06) this.driveState = "ready";
+    this.syncLive();
   }
 
   statusword() {
@@ -406,6 +401,7 @@ class VirtualNode {
     if (typeof obj.max === "number" && value > obj.max) return 0x06090030;
     obj.value = value;
     if (index === 0x6040 && sub === 0) this.applyControlword(value);
+    else if (index === 0x6060 && sub === 0) this.syncLive();
     return 0;
   }
 
@@ -1372,6 +1368,60 @@ class Workbench {
     return "Object 0x" + dcf.padHex(index, 4) + " is not in this controller. The shaft stays stopped.";
   }
 
+  cia402State(sw) {
+    const word = Number(sw) >>> 0;
+    if ((word & 0x4f) === 0x08) return "Fault";
+    if ((word & 0x6f) === 0x27) return "Operation enabled";
+    if ((word & 0x6f) === 0x07) return "Quick stop active";
+    if ((word & 0x6f) === 0x23) return "Switched on";
+    if ((word & 0x6f) === 0x21) return "Ready to switch on";
+    if ((word & 0x4f) === 0x40) return "Switch on disabled";
+    return "";
+  }
+
+  async readOptional(node, index, sub) {
+    try {
+      const read = await this.readObject(node, index, sub);
+      return { known: true, value: read.value };
+    } catch (err) {
+      if (this.objectMissing(err)) return { known: false, missing: true };
+      return { known: false, error: String(err && err.message || err) };
+    }
+  }
+
+  async commissionVelocity(force) {
+    const node = this.selectedNode;
+    try {
+      await this.writeDrive(node, 0x6060, 0, 3, force);
+      await this.writeDrive(node, 0x6040, 0, 0x0006, force);
+      await this.writeDrive(node, 0x6040, 0, 0x0007, force);
+      await this.writeDrive(node, 0x6040, 0, 0x000f, force);
+    } catch (err) {
+      this.commandRpm = 0;
+      this.motionReady = false;
+      throw err;
+    }
+    if (this.node.nmt !== 5) this.nmt("start", node);
+    const mode = await this.readOptional(node, 0x6061, 0);
+    const status = await this.readOptional(node, 0x6041, 0);
+    const state = status.known ? this.cia402State(status.value) : "";
+    if (mode.known && (Number(mode.value) | 0) !== 3) {
+      this.commandRpm = 0;
+      this.motionReady = false;
+      throw new Error("The controller did not accept profile velocity. Modes of operation display is " + mode.value + ". The slow spin leaves the shaft stopped.");
+    }
+    if (status.known && state !== "Operation enabled") {
+      this.commandRpm = 0;
+      this.motionReady = false;
+      const shown = state || ("statusword 0x" + dcf.padHex(status.value >>> 0, 4));
+      throw new Error("The drive is in " + shown + ". A target speed is sent only in Operation enabled. The slow spin leaves the shaft stopped.");
+    }
+    this.motionReady = true;
+    if (status.known) this.remoteStatus = status.value >>> 0;
+    this.info(state ? "Profile velocity is set. Drive state is " + state + "." : "Profile velocity is set. Enable sequence sent.", "help");
+    return { state: state || "enable sent", statusword: status.known ? (status.value >>> 0) : null, mode: mode.known ? (Number(mode.value) | 0) : 3 };
+  }
+
   async writeDrive(node, index, sub, value, force) {
     try {
       await this.writeObject(node, index, sub, value, force);
@@ -1884,7 +1934,13 @@ class Workbench {
     if (op === "shutdown") return this.writeDrive(node, 0x6040, 0, 0x0006, force);
     if (op === "switchon") return this.writeDrive(node, 0x6040, 0, 0x0007, force);
     if (op === "quickstop") return this.writeDrive(node, 0x6040, 0, 0x0002, force);
-    if (op === "faultreset") return this.writeDrive(node, 0x6040, 0, 0x0080, force);
+    if (op === "faultreset") {
+      await this.writeDrive(node, 0x6040, 0, 0x0080, force);
+      await this.writeDrive(node, 0x6040, 0, 0x0006, force);
+      this.info("Fault reset sent, then shutdown", "info");
+      return;
+    }
+    if (op === "commission") return this.commissionVelocity(force);
     if (op === "mode") {
       const modes = { pp: 1, pv: 3, tq: 4, velocity: 3, torque: 4, position: 1 };
       const mode = modes[String(raw).toLowerCase()] || parseUserNumber(raw);
@@ -1942,10 +1998,7 @@ class Workbench {
     const sign = dir < 0 ? -1 : 1;
     const next = clamp((this.commandRpm || 0) + sign * 100, -maxV, maxV);
     try {
-      if (!this.driveIsEnabled() && !this.motionReady) {
-        await this.demand("mode", "pv", true);
-        await this.demand("enable", null, true);
-      }
+      if (!this.driveIsEnabled() && !this.motionReady) await this.commissionVelocity(true);
       await this.writeDrive(this.selectedNode, 0x60ff, 0, next, true);
       this.commandRpm = next;
       return { ok: true, rpm: next };
@@ -2075,6 +2128,7 @@ class Workbench {
       busExt: Date.now() - (this.busExtAt || 0) < 3000,
       nmtName: this.nmtName(),
       driveState: this.adapter === "ixxat" ? (this.remoteFault ? "fault" : "hardware") : this.node.driveState,
+      cia402State: this.cia402State(this.adapter === "ixxat" ? (this.remoteStatus || 0) : sw),
       helperMode: this.helperMode,
       helperStatus: this.helperStatus(),
       dcfName: this.dcfName,
@@ -2236,8 +2290,8 @@ class Workbench {
     if (type === "nudge") return this.nudgeSpeed(msg.dir);
     if (type === "cia402") {
       try {
-        await this.demand(msg.op, msg.value);
-        return { ok: true };
+        const result = await this.demand(msg.op, msg.value);
+        return Object.assign({ ok: true }, result || {});
       } catch (err) {
         this.info(err.message, "error");
         return { ok: false, error: err.message };

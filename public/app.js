@@ -451,7 +451,8 @@ function renderOpenDialog(s) {
     $("rec-state").textContent = s.recording ? "Recording " + s.recordCount + " frames" : "Not recording";
   }
   if ($("dlg-402").open) {
-    $("dem-live").textContent = `Drive is ${s.driveState}. Shaft ${s.live.velocityRpm.toFixed(0)} rpm, torque ${s.live.torquePct.toFixed(1)} %.`;
+    const state = s.cia402State || s.driveState;
+    $("dem-live").textContent = `CiA 402 state is ${state}. Shaft ${s.live.velocityRpm.toFixed(0)} rpm, torque ${s.live.torquePct.toFixed(1)} %.`;
   }
   if ($("dlg-faults").open) {
     $("fault-live").textContent = s.live.faultCode
@@ -546,16 +547,15 @@ async function prepareDrive() {
   if (!ping.ok) throw new Error(ping.error || "The controller did not answer. Check the number and the CAN lead.");
   const heard = ping.node || node;
   await act({ type: "nmt", cmd: "start", node: heard });
-  const enable = await act({ type: "cia402", op: "enable" });
-  if (!enable.ok) throw new Error(enable.error || "The drive did not enable.");
-  await act({ type: "cia402", op: "mode", value: "pv" });
-  return heard;
+  const run = await act({ type: "cia402", op: "commission", value: "pv" });
+  if (!run.ok) throw new Error(run.error || "The drive did not enable.");
+  return { node: heard, state: run.state || "" };
 }
 
 async function runGuardedSpin() {
   $("wiz-spin-result").textContent = "Turning the shaft up to 100 rpm…";
   try {
-    await prepareDrive();
+    const ready = await prepareDrive();
     await act({ type: "cia402", op: "vel", value: 100 });
     await sleep(2200);
     await poll();
@@ -570,7 +570,8 @@ async function runGuardedSpin() {
     }
     if (ui.latest.adapter === "ixxat") {
       wiz.spinHardware = true;
-      $("wiz-spin-result").textContent = "The speed command was sent on the IXXAT adapter, then set back to zero. Watch the real shaft. The rpm gauge stays on the practice controller and does not follow this inverter. If the shaft did not turn, check the DC link, the three phase leads, and that the drive enabled.";
+      const state = ready.state ? " Drive state is " + ready.state + "." : "";
+      $("wiz-spin-result").textContent = "Profile velocity was set, then the speed command was sent on the IXXAT adapter and set back to zero." + state + " Watch the real shaft. The rpm gauge stays on the practice controller and does not follow this inverter. If the shaft did not turn, check the DC link, the three phase leads, and that the drive enabled.";
       return;
     }
     if (rpm < 15) {
@@ -921,7 +922,7 @@ const HELP = [
   ["Commands", "The command window takes the same kind of lines as the old console: read 0x1008 0, write 0x60FF 0 1500, nmt start, demand enable, dcf open <path>, trace arm. Type help there for the full list."],
   ["DCF files", "Open a .dcf or .eds from Offline DCF. Names, values, comments, and unknown keys are kept. Compare two files and ignore read-only objects when you only care about settings. Save writes the file back if it was opened from a path, and also downloads a copy."],
   ["CANopen", "SDO upload and download, NMT, heartbeat, EMCY, SYNC, and one RPDO/TPDO pair are implemented, including segmented strings. PDO mapping uses the 0x1600 and 0x1A00 objects."],
-  ["CiA 402", "Shutdown, switch on, enable operation, quick stop, disable voltage, and fault reset follow the standard controlword. Profile velocity, profile torque, and profile position are accepted. The virtual shaft ramps with the acceleration and deceleration objects."],
+  ["CiA 402", "The slow spin sets profile velocity first, mode 3 in object 0x6060. It then sends Shutdown 0x0006, Switch on 0x0007, and Enable operation 0x000F on the controlword 0x6040. A target speed is sent only when the statusword 0x6041 says Operation enabled. Profile velocity is the bench mode because each command is one SDO, not a setpoint on every cycle. Fault reset sends 0x0080 and then Shutdown."],
   ["E-stop and speed keys", "The red E-STOP button sets the target speed to 0 and sends a quick stop. Space does the same, except while you are typing in a text box. Arrow up adds 100 rpm. Arrow down subtracts 100 rpm. The first arrow also enables profile velocity if the drive is not already running. The command line keeps its own arrow keys for history."],
   ["J1939", "The demand window sends TSC1, PGN 0. Requested speed is 0.125 rpm per bit. Requested torque is 1 percent per bit with an offset of -125 percent. The tool address defaults to 250 (0xFA)."],
   ["Updates", "Help, Check for updates, looks at the public project on GitHub. When a newer setup program is published, a bar at the bottom downloads it. This window closes, Windows asks for permission, and the setup program replaces this copy and opens it again."],
@@ -1284,8 +1285,7 @@ function bind() {
     const node = Number($("node-id").value) || 1;
     await act({ type: "ping", node });
     await act({ type: "nmt", cmd: "start", node });
-    await act({ type: "cia402", op: "enable" });
-    await act({ type: "cia402", op: "mode", value: "pv" });
+    await act({ type: "cia402", op: "commission", value: "pv" });
     await act({ type: "cia402", op: "vel", value: 600 });
     setPhaseLock(null);
   });
