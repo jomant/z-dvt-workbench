@@ -291,36 +291,72 @@ async function main() {
   const heldAgain = await engine.readObject(1, 0x1008, 0);
   assert(heldAgain.value === "ABCDEFG" && segReqs.length === 4, "second device-name read starts clean");
 
+  let nameState = "stuck";
+  engine.node.onSdo = function (data) {
+    const cmd = data[0];
+    const ccs = cmd >> 5;
+    if (cmd === 0x80) {
+      nameState = "idle";
+      return;
+    }
+    if (ccs === 2) {
+      if (nameState === "stuck") {
+        this.reply(0x580 + this.id, [0x80, 0x08, 0x10, 0, 0x01, 0x00, 0x04, 0x05]);
+        return;
+      }
+      this.reply(0x580 + this.id, [0x43, 0x08, 0x10, 0, 0x54, 0x65, 0x73, 0x74]);
+      return;
+    }
+    if (ccs === 3) this.reply(0x580 + this.id, [0x80, 0x08, 0x10, 0, 0x01, 0x00, 0x04, 0x05]);
+  };
+  const recovered = await engine.readObject(1, 0x1008, 0);
+  assert(recovered.value === "Test", "busy name transfer is cleared and read again, got " + recovered.value);
+
+  let open = true;
   engine.node.onSdo = function (data) {
     const cmd = data[0];
     const ccs = cmd >> 5;
     if (cmd === 0x80) return;
     if (ccs === 2) {
-      this.reply(0x580 + this.id, [0x41, 0x08, 0x10, 0, 4, 0, 0, 0]);
-      return;
-    }
-    if (ccs === 3) {
-      const toggle = (cmd >> 4) & 1;
-      if (toggle !== 1) {
-        this.reply(0x580 + this.id, [0x80, 0x08, 0x10, 0, 0x00, 0x00, 0x03, 0x05]);
+      if (open) {
+        this.reply(0x580 + this.id, [0x80, 0x08, 0x10, 0, 0x01, 0x00, 0x04, 0x05]);
         return;
       }
-      this.reply(0x580 + this.id, [0x17, 0x54, 0x65, 0x73, 0x74, 0, 0, 0]);
+      this.reply(0x580 + this.id, [0x43, 0x08, 0x10, 0, 0x54, 0x65, 0x73, 0x74]);
+      return;
     }
+    if (ccs === 3 && ((cmd >> 4) & 1) === 1 && open) {
+      open = false;
+      this.reply(0x580 + this.id, [0x1f, 0, 0, 0, 0, 0, 0, 0]);
+      return;
+    }
+    if (ccs === 3) this.reply(0x580 + this.id, [0x80, 0x08, 0x10, 0, 0x01, 0x00, 0x04, 0x05]);
   };
-  const recovered = await engine.readObject(1, 0x1008, 0);
-  assert(recovered.value === "Test", "toggle mismatch retries with the other bit, got " + recovered.value);
+  const drained = await engine.readObject(1, 0x1008, 0);
+  assert(drained.value === "Test", "stuck name transfer is drained, got " + drained.value);
 
-  let toggleHits = 0;
+  let initiates = 0;
   engine.node.onSdo = function (data) {
     if (data[0] === 0x80) return;
-    toggleHits += 1;
-    this.reply(0x580 + this.id, [0x80, 0x08, 0x10, 0, 0x00, 0x00, 0x03, 0x05]);
+    if ((data[0] >> 5) === 2) initiates += 1;
+    this.reply(0x580 + this.id, [0x80, 0x08, 0x10, 0, 0x01, 0x00, 0x04, 0x05]);
   };
   let toggleMsg = "";
   try { await engine.readObject(1, 0x1008, 0); } catch (err) { toggleMsg = err.message; }
-  assert(/0x05030000/.test(toggleMsg) && /toggle bit/i.test(toggleMsg), "toggle abort stays visible, got " + toggleMsg);
-  assert(toggleHits === 3, "toggle retry stops, got " + toggleHits);
+  assert(/0x05040001/.test(toggleMsg) && /previous transfer/.test(toggleMsg), "command abort stays visible, got " + toggleMsg);
+  assert(initiates === 3, "busy transfer retry stops, got " + initiates);
+
+  engine.node.onSdo = function (data) {
+    const index = data[1] | (data[2] << 8);
+    if (data[0] === 0x80) return;
+    if ((data[0] >> 5) === 2 && index === 0x1008) {
+      this.reply(0x580 + this.id, [0x80, 0x08, 0x10, 0, 0x01, 0x00, 0x04, 0x05]);
+      return;
+    }
+    return realOnSdo(data);
+  };
+  const named = await engine.ping(1);
+  assert(named.ok === true && named.name === "", "ping continues when the name is busy, got " + JSON.stringify(named));
   engine.node.onSdo = realOnSdo;
   engine.node.up = null;
 

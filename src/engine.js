@@ -47,7 +47,7 @@ const MODE_ENUM = [
 const SDO_ABORT = {
   0x05030000: "The toggle bit did not match.",
   0x05040000: "The SDO timed out in the controller.",
-  0x05040001: "The command was not valid for this object.",
+  0x05040001: "The controller was still finishing the previous transfer, so this command was not valid.",
   0x06010000: "This object cannot be accessed.",
   0x06010001: "This object is write-only.",
   0x06010002: "This object is read-only.",
@@ -1172,10 +1172,29 @@ class Workbench {
     }
     this.touchSdo();
     if (cmd === 0x80) {
+      if (job.op === "drain") {
+        this.finishSdo(false);
+        return;
+      }
       const code = (data[4] | (data[5] << 8) | (data[6] << 16) | (data[7] << 24)) >>> 0;
       const where = "0x" + dcf.padHex(job.index, 4) + ":" + job.sub;
       const why = SDO_ABORT[code] || "";
       this.failSdo("SDO abort " + where + " 0x" + dcf.padHex(code, 8) + (why ? ". " + why : ""));
+      return;
+    }
+    if (job.op === "drain") {
+      if (scs === 0) {
+        const last = (cmd & 1) !== 0;
+        job.segments = (job.segments || 0) + 1;
+        if (last || job.segments >= 4) {
+          this.finishSdo(true);
+          return;
+        }
+        job.toggle ^= 1;
+        this.requestUploadSegment(job);
+        return;
+      }
+      this.finishSdo(false);
       return;
     }
     if (job.op === "read" && scs === 2) {
@@ -1185,7 +1204,7 @@ class Workbench {
         this.finishSdo(Buffer.from(data.slice(4, 4 + len)));
       } else {
         if (cmd & 0x01) job.size = data[4] | (data[5] << 8) | (data[6] << 16) | (data[7] << 24);
-        job.toggle = job.firstToggle ? 1 : 0;
+        job.toggle = 0;
         job.segments = 0;
         this.requestUploadSegment(job);
       }
@@ -1248,10 +1267,22 @@ class Workbench {
     return { id: 0x600 + node, ext: false, data: bytes, dlc: 8 };
   }
 
-  async readRawOnce(node, index, sub, firstToggle) {
+  protocolBusy(message) {
+    return /0x05030000|0x05040000|0x05040001/.test(String(message)) || message === "SDO toggle";
+  }
+
+  async drainStuckUpload(node, index, sub) {
+    const { job, promise } = this.beginSdo(node, index, sub);
+    job.op = "drain";
+    job.toggle = 1;
+    job.segmenting = true;
+    this.transmit(this.sdoFrame(node, [0x70, 0, 0, 0, 0, 0, 0, 0]));
+    try { await promise; } catch { /* the controller was already idle, or the old transfer ended */ }
+  }
+
+  async readRawOnce(node, index, sub) {
     const { job, promise } = this.beginSdo(node, index, sub);
     job.op = "read";
-    job.firstToggle = firstToggle ? 1 : 0;
     this.transmit(this.sdoFrame(node, [0x40, index & 0xff, (index >> 8) & 0xff, sub & 0xff, 0, 0, 0, 0]));
     return promise;
   }
@@ -1260,19 +1291,19 @@ class Workbench {
     if (!this.busOn) throw new Error("CAN is stopped");
     const timeoutAttempts = this.adapter === "ixxat" ? 2 : 1;
     let timeoutTry = 0;
-    let toggleTry = 0;
+    let protocolTry = 0;
     for (;;) {
-      const firstToggle = toggleTry >= 2 ? 1 : 0;
       try {
-        return await this.readRawOnce(node, index, sub, firstToggle);
+        return await this.readRawOnce(node, index, sub);
       } catch (err) {
         const msg = String(err && err.message || err);
-        if ((/0x05030000/.test(msg) || msg === "SDO toggle") && toggleTry < 2) {
-          toggleTry += 1;
-          this.sendSdoAbort(node, index, sub, 0x05030000);
+        if (this.protocolBusy(msg) && protocolTry < 2) {
+          protocolTry += 1;
+          this.sendSdoAbort(node, index, sub, 0x05040000);
+          if (protocolTry === 2) await this.drainStuckUpload(node, index, sub);
           continue;
         }
-        if (/0x05030000/.test(msg) || msg === "SDO toggle") this.sendSdoAbort(node, index, sub, 0x05030000);
+        if (this.protocolBusy(msg)) this.sendSdoAbort(node, index, sub, 0x05040000);
         if (!/SDO timeout/.test(msg)) throw err;
         const why = this.explainSdoMiss(node);
         const lost = this.sdoRxCount > 0 || this.sdoExtCount > 0;
@@ -1458,24 +1489,37 @@ class Workbench {
   async ping(nodeId) {
     let node = this.preferHeardNode(nodeId || this.selectedNode);
     this.selectedNode = node;
+    let nameValue = "";
+    let nameError = "";
     try {
-      const name = await this.readObject(node, 0x1008, 0);
-      let deviceType = 0;
-      try { deviceType = (await this.readObject(node, 0x1000, 0)).value >>> 0; } catch { deviceType = 0; }
-      this.helperMode = "online";
-      this.dcfDoc = null;
-      this.dcfDirty = false;
-      this.dictEpoch += 1;
-      this.remoteName = String(name.value);
-      await this.readInverterLive(node);
-      const nmt = this.adapter === "ixxat" && this.remoteNmt == null ? "no heartbeat yet" : this.nmtName().toLowerCase();
-      this.info(`Ping node ${node}: ${name.value} (${nmt}), device type 0x${dcf.padHex(deviceType, 8)}`, "help");
-      return { ok: true, name: name.value, node };
+      nameValue = String((await this.readObject(node, 0x1008, 0)).value);
     } catch (err) {
-      this.helperMode = "offline";
-      this.info(`Ping node ${node} failed: ${err.message}`, "error");
-      return { ok: false, error: err.message, node };
+      nameError = String(err && err.message || err);
     }
+    let deviceType = 0;
+    let typeError = "";
+    try {
+      deviceType = (await this.readObject(node, 0x1000, 0)).value >>> 0;
+    } catch (err) {
+      typeError = String(err && err.message || err);
+    }
+    if (!nameValue && typeError) {
+      this.helperMode = "offline";
+      const why = nameError || typeError;
+      this.info(`Ping node ${node} failed: ${why}`, "error");
+      return { ok: false, error: why, node };
+    }
+    this.helperMode = "online";
+    this.dcfDoc = null;
+    this.dcfDirty = false;
+    this.dictEpoch += 1;
+    this.remoteName = nameValue;
+    await this.readInverterLive(node);
+    const nmt = this.adapter === "ixxat" && this.remoteNmt == null ? "no heartbeat yet" : this.nmtName().toLowerCase();
+    const typeText = "0x" + dcf.padHex(deviceType, 8);
+    if (nameError) this.info(`Ping node ${node}: device type ${typeText}. The controller name stayed unread. ${nameError}`, "help");
+    else this.info(`Ping node ${node}: ${nameValue} (${nmt}), device type ${typeText}`, "help");
+    return { ok: true, name: nameValue, node };
   }
 
   openDcfText(text, name, filePath) {
