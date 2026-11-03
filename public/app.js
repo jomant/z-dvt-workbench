@@ -175,6 +175,11 @@ function renderStatus(s) {
     op.textContent = s.nmtName === "Operational" ? "Pause the drive" : "Allow the drive to run";
   } else op.hidden = true;
   $("node-id").value = document.activeElement === $("node-id") ? $("node-id").value : s.selectedNode;
+  if ($("rpm-cmd")) $("rpm-cmd").textContent = String(s.commandRpm || 0);
+  if (ui.shownVersion !== s.version) {
+    ui.shownVersion = s.version;
+    paintAbout(s.version);
+  }
   document.body.classList.toggle("level-op", s.accessLevel === "operator");
   const bar = $("update-bar");
   if (bar) {
@@ -705,6 +710,69 @@ function openDialog(id) {
   if (!dlg.open) dlg.showModal();
   if (id === "dlg-phases") startPhase();
   if (id === "dlg-setup") showWizard(1);
+  if (id === "dlg-about") paintAbout(ui.latest && ui.latest.version);
+  liftPad();
+}
+
+function liftPad() {
+  const pad = $("drive-pad");
+  if (!pad || !pad.showPopover) return;
+  try {
+    if (pad.matches(":popover-open")) pad.hidePopover();
+    pad.showPopover();
+  } catch { /* the button stays on the page */ }
+}
+
+function isTypingTarget(el) {
+  if (!el || !el.tagName) return false;
+  const tag = el.tagName;
+  if (tag === "TEXTAREA" || tag === "SELECT") return true;
+  if (el.isContentEditable) return true;
+  if (tag !== "INPUT") return false;
+  const type = (el.type || "text").toLowerCase();
+  return type !== "button" && type !== "checkbox" && type !== "radio" && type !== "range";
+}
+
+let estopBusy = false;
+async function estop() {
+  if (estopBusy) return;
+  estopBusy = true;
+  $("estop").classList.add("down");
+  try {
+    await act({ type: "estop" });
+  } finally {
+    estopBusy = false;
+    setTimeout(() => $("estop").classList.remove("down"), 280);
+  }
+}
+
+let nudgeDir = 0;
+let nudgeRun = false;
+async function nudge(dir) {
+  nudgeDir = dir;
+  if (nudgeRun) return;
+  nudgeRun = true;
+  try {
+    while (nudgeDir) {
+      const dirNow = nudgeDir;
+      nudgeDir = 0;
+      const result = await act({ type: "nudge", dir: dirNow });
+      if (result && result.rpm != null && $("rpm-cmd")) $("rpm-cmd").textContent = String(result.rpm);
+    }
+  } finally {
+    nudgeRun = false;
+  }
+}
+
+let speedHold = 0;
+function startNudge(dir) {
+  stopNudge();
+  nudge(dir);
+  speedHold = setInterval(() => nudge(dir), 140);
+}
+function stopNudge() {
+  if (speedHold) clearInterval(speedHold);
+  speedHold = 0;
 }
 
 const phase = { lock: null, swap: false, theta: 0, last: 0, frame: 0 };
@@ -855,14 +923,20 @@ const HELP = [
   ["DCF files", "Open a .dcf or .eds from Offline DCF. Names, values, comments, and unknown keys are kept. Compare two files and ignore read-only objects when you only care about settings. Save writes the file back if it was opened from a path, and also downloads a copy."],
   ["CANopen", "SDO upload and download, NMT, heartbeat, EMCY, SYNC, and one RPDO/TPDO pair are implemented, including segmented strings. PDO mapping uses the 0x1600 and 0x1A00 objects."],
   ["CiA 402", "Shutdown, switch on, enable operation, quick stop, disable voltage, and fault reset follow the standard controlword. Profile velocity, profile torque, and profile position are accepted. The virtual shaft ramps with the acceleration and deceleration objects."],
+  ["E-stop and speed keys", "The red E-STOP button sets the target speed to 0 and sends a quick stop. Space does the same, except while you are typing in a text box. Arrow up adds 100 rpm. Arrow down subtracts 100 rpm. The first arrow also enables profile velocity if the drive is not already running. The command line keeps its own arrow keys for history."],
   ["J1939", "The demand window sends TSC1, PGN 0. Requested speed is 0.125 rpm per bit. Requested torque is 1 percent per bit with an offset of -125 percent. The tool address defaults to 250 (0xFA)."],
   ["Updates", "Help, Check for updates, looks at the public project on GitHub. When a newer setup program is published, a bar at the bottom downloads it and starts the installer. This window closes so the files can be replaced."],
   ["Not included", "This is not a BorgWarner or Sevcon product. It does not program vendor firmware, does not implement a vendor security unlock, and does not ship the vendor object database. A DCF you already have still opens, because those names are stored in the file."],
 ];
 
+function paintAbout(version) {
+  const shown = version || (ui.latest && ui.latest.version) || "";
+  $("about-body").innerHTML = `<p><b>Z-DVT Workbench ${esc(shown)}</b></p><p><b>Crafted by Z-Jomant Meister</b></p><p>Z-DVT Workbench replaces the customer configuration workflow. DVT Customer 2025.05b on this PC reports that its VCI4 Tcl 9 DLL will not load, and that release is no longer updated.</p><p>Practice controller 1 speaks CANopen and a small J1939 speed and torque demand. Connect IXXAT on the CAN menu talks to a USB-CAN dongle through the VCI library instead. Saved DCF settings files can be edited and compared offline.</p><p>Not affiliated with BorgWarner or Sevcon.</p>`;
+}
+
 function fillHelp() {
   $("help-body").innerHTML = HELP.map(([title, body]) => `<h2>${esc(title)}</h2><p>${esc(body)}</p>`).join("");
-  $("about-body").innerHTML = `<p><b>Z-DVT Workbench ${ui.latest ? ui.latest.version : "2026.09"}</b></p><p><b>Crafted by Z-Jomant Meister</b></p><p>Z-DVT Workbench replaces the customer configuration workflow. DVT Customer 2025.05b on this PC reports that its VCI4 Tcl 9 DLL will not load, and that release is no longer updated.</p><p>Practice controller 1 speaks CANopen and a small J1939 speed and torque demand. Connect IXXAT on the CAN menu talks to a USB-CAN dongle through the VCI library instead. Saved DCF settings files can be edited and compared offline.</p><p>Not affiliated with BorgWarner or Sevcon.</p>`;
+  paintAbout(ui.latest && ui.latest.version);
 }
 
 async function onAction(name) {
@@ -904,7 +978,10 @@ async function onAction(name) {
   else if (name === "trace") openDialog("dlg-trace");
   else if (name === "faults") openDialog("dlg-faults");
   else if (name === "help") openDialog("dlg-help");
-  else if (name === "about") openDialog("dlg-about");
+  else if (name === "about") {
+    paintAbout(ui.latest && ui.latest.version);
+    openDialog("dlg-about");
+  }
   else if (name === "check-update") {
     ui.updateLater = false;
     await act({ type: "update", check: true });
@@ -1224,6 +1301,24 @@ document.querySelectorAll("dialog header button").forEach((btn) => {
   });
 });
 fillHelp();
+liftPad();
+$("estop").addEventListener("click", estop);
+document.addEventListener("keydown", (event) => {
+  if (isTypingTarget(event.target)) return;
+  if (event.code === "Space") {
+    if (event.repeat) return;
+    event.preventDefault();
+    estop();
+  } else if (event.key === "ArrowUp" || event.key === "ArrowDown") {
+    if (event.repeat) return;
+    event.preventDefault();
+    startNudge(event.key === "ArrowUp" ? 1 : -1);
+  }
+});
+document.addEventListener("keyup", (event) => {
+  if (event.key === "ArrowUp" || event.key === "ArrowDown") stopNudge();
+});
+window.addEventListener("blur", stopNudge);
 $("update-go").addEventListener("click", async () => {
   $("update-text").textContent = "Downloading the installer…";
   const result = await act({ type: "update", install: true });

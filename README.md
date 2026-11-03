@@ -86,6 +86,12 @@ The setup program shows this same list when installation finishes. A copy is als
 5. Find the controller, then allow it to run. Watch the real shaft. The rpm picture follows the practice controller only.
 6. Open the CAN menu and choose Disconnect CAN, or Connect virtual CAN, to return to the practice controller.
 
+### Stop and speed
+
+1. The red E-STOP button sets the target speed to 0 and sends a quick stop. Space does the same, except while you are typing in a text box.
+2. Arrow up adds 100 rpm. Arrow down subtracts 100 rpm. The first arrow enables profile velocity if the drive is not already running.
+3. The speed number above the button is the command. The command line still uses the arrow keys for earlier commands.
+
 ### Updates
 
 1. Open Help and choose Check for updates.

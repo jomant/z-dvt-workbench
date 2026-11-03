@@ -213,6 +213,23 @@ async function main() {
   engine.adapter = "virtual";
   engine.hw = null;
 
+  await engine.execute("demand enable");
+  await engine.execute("demand vel 800");
+  const stopped = await engine.estop();
+  assert(stopped.ok === true, "estop accepted");
+  assert(Number(engine.node.get(0x60ff, 0).value) === 0, "estop clears target speed");
+  assert(engine.node.driveState === "quick stop", "estop sends quick stop, got " + engine.node.driveState);
+  assert(engine.commandRpm === 0, "estop command is 0");
+  engine.accessLevel = "operator";
+  const up = await engine.nudgeSpeed(1);
+  assert(up.rpm === 100, "arrow up adds 100 rpm, got " + up.rpm);
+  assert(engine.node.driveState === "operation enabled", "arrow up enables the drive");
+  const down = await engine.nudgeSpeed(-1);
+  assert(down.rpm === 0, "arrow down subtracts 100 rpm, got " + down.rpm);
+  await engine.estop();
+  assert(engine.node.driveState === "quick stop", "operator can e-stop");
+  engine.accessLevel = "engineer";
+
   if (engine.sdoJob && engine.sdoJob.timer) clearTimeout(engine.sdoJob.timer);
   engine.stop();
   fs.unlinkSync(tmp);

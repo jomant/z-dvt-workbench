@@ -677,6 +677,8 @@ class Workbench {
     this.filters = {};
     for (const name of FILTER_NAMES) this.filters[name] = true;
     this.selectedNode = 1;
+    this.commandRpm = 0;
+    this.motionReady = false;
     this.sdoTimeout = 1000;
     this.accessLevel = "engineer";
     this.j1939Tool = 0xfa;
@@ -1213,9 +1215,9 @@ class Workbench {
     throw caught || new Error(this.explainSdoMiss(node));
   }
 
-  async writeRaw(node, index, sub, payload) {
+  async writeRaw(node, index, sub, payload, force) {
     if (!this.busOn) throw new Error("CAN is stopped");
-    if (this.accessLevel !== "engineer") throw new Error("Operator level cannot write. Switch to Engineer under Settings.");
+    if (!force && this.accessLevel !== "engineer") throw new Error("Operator level cannot write. Switch to Engineer under Settings.");
     const { job, promise } = this.beginSdo(node, index, sub);
     job.op = "write";
     job.payload = Buffer.from(payload);
@@ -1259,7 +1261,7 @@ class Workbench {
     return { index, sub, name: "Object", type: dcf.DT.VISIBLE_STRING, access: "rw", value: String(rawValue) };
   }
 
-  async writeObject(node, index, sub, rawValue) {
+  async writeObject(node, index, sub, rawValue, force) {
     const obj = this.objectForWrite(node, index, sub, rawValue);
     if (!obj) throw new Error("Object 0x" + dcf.padHex(index, 4) + ":" + sub + " is not in the demo dictionary");
     let value = rawValue;
@@ -1271,7 +1273,7 @@ class Workbench {
     if (typeof obj.min === "number" && value < obj.min) throw new Error("Value is out of range");
     if (typeof obj.max === "number" && value > obj.max) throw new Error("Value is out of range");
     const payload = encodeObject({ type: obj.type, value });
-    await this.writeRaw(node, index, sub, payload);
+    await this.writeRaw(node, index, sub, payload, force);
     if (this.adapter === "ixxat") {
       obj.value = value;
       if (node === this.node.id) {
@@ -1580,6 +1582,7 @@ class Workbench {
       this.transmit({ id: 0x80, ext: false, data: [], dlc: 0 });
       return { ok: true };
     }
+    if (cmd === "estop") return this.estop();
     if (cmd === "demand") {
       need(1);
       await this.demand(arg[0], arg[1]);
@@ -1649,43 +1652,82 @@ class Workbench {
     throw new Error("Unknown command '" + cmd + "'. Type help.");
   }
 
-  async demand(op, raw) {
+  driveIsEnabled() {
+    if (this.adapter === "ixxat") return ((this.remoteStatus || 0) & 0x6f) === 0x27;
+    return this.node.driveState === "operation enabled" && this.node.nmt === 5;
+  }
+
+  async demand(op, raw, force) {
     const node = this.selectedNode;
     if (op === "enable") {
-      await this.writeObject(node, 0x6040, 0, 0x0006);
-      await this.writeObject(node, 0x6040, 0, 0x0007);
-      await this.writeObject(node, 0x6040, 0, 0x000f);
+      await this.writeObject(node, 0x6040, 0, 0x0006, force);
+      await this.writeObject(node, 0x6040, 0, 0x0007, force);
+      await this.writeObject(node, 0x6040, 0, 0x000f, force);
       if (this.node.nmt !== 5) this.nmt("start", node);
+      this.motionReady = true;
       this.info("Drive enable sequence sent", "help");
       return;
     }
     if (op === "disable") {
-      await this.writeObject(node, 0x6040, 0, 0x0000);
+      await this.writeObject(node, 0x6040, 0, 0x0000, force);
+      this.motionReady = false;
       this.info("Disable voltage sent", "info");
       return;
     }
-    if (op === "shutdown") return this.writeObject(node, 0x6040, 0, 0x0006);
-    if (op === "switchon") return this.writeObject(node, 0x6040, 0, 0x0007);
-    if (op === "quickstop") return this.writeObject(node, 0x6040, 0, 0x0002);
-    if (op === "faultreset") return this.writeObject(node, 0x6040, 0, 0x0080);
+    if (op === "shutdown") return this.writeObject(node, 0x6040, 0, 0x0006, force);
+    if (op === "switchon") return this.writeObject(node, 0x6040, 0, 0x0007, force);
+    if (op === "quickstop") return this.writeObject(node, 0x6040, 0, 0x0002, force);
+    if (op === "faultreset") return this.writeObject(node, 0x6040, 0, 0x0080, force);
     if (op === "mode") {
       const modes = { pp: 1, pv: 3, tq: 4, velocity: 3, torque: 4, position: 1 };
       const mode = modes[String(raw).toLowerCase()] || parseUserNumber(raw);
-      await this.writeObject(node, 0x6060, 0, mode);
+      await this.writeObject(node, 0x6060, 0, mode, force);
       this.info("Mode set to " + mode, "info");
       return;
     }
     if (op === "vel" || op === "velocity") {
-      await this.writeObject(node, 0x60ff, 0, parseUserNumber(raw));
+      const rpm = parseUserNumber(raw);
+      this.commandRpm = rpm;
+      await this.writeObject(node, 0x60ff, 0, rpm, force);
       this.info("Target velocity " + raw + " rpm", "info");
       return;
     }
     if (op === "torque" || op === "tq") {
-      await this.writeObject(node, 0x6071, 0, Math.round(Number(raw) * 10));
+      await this.writeObject(node, 0x6071, 0, Math.round(Number(raw) * 10), force);
       this.info("Target torque " + raw + " %", "info");
       return;
     }
     throw new Error("demand enable|disable|shutdown|switchon|quickstop|faultreset|mode|vel|torque");
+  }
+
+  async estop() {
+    this.j1939Hold = null;
+    this.commandRpm = 0;
+    this.motionReady = false;
+    const node = this.selectedNode;
+    try {
+      await this.writeObject(node, 0x60ff, 0, 0, true);
+      await this.writeObject(node, 0x6071, 0, 0, true);
+      await this.writeObject(node, 0x6040, 0, 0x0002, true);
+      this.info("E-stop. Target speed is 0. Quick stop sent to node " + node + ".", "error");
+      return { ok: true, rpm: 0 };
+    } catch (err) {
+      this.info("E-stop failed: " + err.message, "error");
+      return { ok: false, error: err.message, rpm: 0 };
+    }
+  }
+
+  async nudgeSpeed(dir) {
+    const maxV = Math.abs(Number(this.node.get(0x2001, 2).value) || 6000);
+    const sign = dir < 0 ? -1 : 1;
+    const next = clamp((this.commandRpm || 0) + sign * 100, -maxV, maxV);
+    if (!this.driveIsEnabled() && !this.motionReady) {
+      await this.demand("mode", "pv", true);
+      await this.demand("enable", null, true);
+    }
+    this.commandRpm = next;
+    await this.writeObject(this.selectedNode, 0x60ff, 0, next, true);
+    return { ok: true, rpm: next };
   }
 
   publicObject(obj) {
@@ -1801,6 +1843,7 @@ class Workbench {
       adapter: this.adapter,
       adapterName: this.adapterName,
       selectedNode: this.selectedNode,
+      commandRpm: this.commandRpm || 0,
       busNodes: this.freshNodes().map((row) => ({ node: row.node, heartbeat: row.heartbeat, sdo: row.sdo, pdo: row.pdo, nmt: row.nmt })),
       busExt: Date.now() - (this.busExtAt || 0) < 3000,
       nmtName: this.nmtName(),
@@ -1960,6 +2003,8 @@ class Workbench {
         return { ok: false, error: err.message };
       }
     }
+    if (type === "estop") return this.estop();
+    if (type === "nudge") return this.nudgeSpeed(msg.dir);
     if (type === "cia402") {
       try {
         await this.demand(msg.op, msg.value);
@@ -2064,6 +2109,7 @@ function helpRows() {
     { name: "read <index> [sub] [node]", summary: "SDO upload. Example: read 0x1008 0" },
     { name: "write <index> <sub> <value>", summary: "SDO download. Example: write 0x60FF 0 1500" },
     { name: "demand <op> [value]", summary: "enable, disable, mode pv|tq, vel <rpm>, torque <%>" },
+    { name: "estop", summary: "Set target speed to 0 and send CiA 402 quick stop. Space does the same." },
     { name: "baud <kbit>", summary: "1000, 800, 500, 250, 125, 100, 50, or 20." },
     { name: "filter <type|all|none|defaults>", summary: "Show or hide CAN log types." },
     { name: "cli on|off", summary: "Periodic text from the controller in the CAN log." },
